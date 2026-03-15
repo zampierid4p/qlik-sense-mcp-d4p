@@ -350,6 +350,42 @@ Alternative header:
 X-MCP-Token: <MCP_AUTH_TOKEN>
 ```
 
+### Claude Desktop (MCP Remote)
+
+Use the remote gateway URL and send the bearer token in headers.
+
+```json
+{
+  "mcpServers": {
+    "qlik-sense-remote": {
+      "transport": "streamable-http",
+      "url": "https://your-mcp-host.example.com/mcp/",
+      "headers": {
+        "Authorization": "Bearer YOUR_MCP_AUTH_TOKEN"
+      }
+    }
+  }
+}
+```
+
+Quick local test (after `docker compose -f docker-compose.remote.yml up -d`):
+
+```json
+{
+  "mcpServers": {
+    "qlik-sense-remote": {
+      "transport": "streamable-http",
+      "url": "http://localhost:8080/mcp/",
+      "headers": {
+        "Authorization": "Bearer YOUR_MCP_AUTH_TOKEN"
+      }
+    }
+  }
+}
+```
+
+An example file is also available in `claude_desktop_remote.example.json`.
+
 Notes:
 - Endpoint path is configurable with `MCP_GATEWAY_PATH` (default `/mcp`).
 - When calling manually with `curl`, use the slash-suffixed URL (`/mcp/`) to avoid `307` redirect.
