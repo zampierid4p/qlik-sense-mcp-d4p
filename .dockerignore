@@ -1,0 +1,49 @@
+# Version control
+.git/
+.gitignore
+
+# Python artefacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Tests & dev tooling
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Project docs & temp files
+temp/
+*.md
+!README.md
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Secrets / certs (never bake into the image)
+*.pem
+*.crt
+*.key
+*.p12
+.env
+.env.*
+mcp.json

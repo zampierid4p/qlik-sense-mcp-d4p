@@ -13,6 +13,7 @@ Model Context Protocol (MCP) server for integration with Qlik Sense Enterprise A
 - [Features](#features)
 - [Installation](#installation)
 - [Configuration](#configuration)
+- [Docker](#docker)
 - [Usage](#usage)
 - [API Reference](#api-reference)
 - [Architecture](#architecture)
@@ -210,6 +211,102 @@ The server requires the following environment variables for configuration:
 #### Logging
 - **`LOG_LEVEL`** - Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, default: `INFO`)
 
+## Docker
+
+The repository includes a multi-stage `Dockerfile`, a `docker-compose.yml` and a `.dockerignore`.
+The server uses the MCP **stdio** protocol, so the container must always be started with an open stdin (`-i`).
+
+### Prerequisites
+
+```bash
+# 1. Copy the environment template and fill in your values
+cp .env.example .env
+
+# 2. Place your Qlik Sense certificates in ./certs/
+#    expected filenames (configurable via env vars):
+#      certs/client.pem
+#      certs/client_key.pem
+#      certs/root.pem
+mkdir -p certs
+```
+
+### Build the image
+
+```bash
+docker build -t qlik-sense-mcp-server .
+```
+
+### Run with Docker (standalone)
+
+```bash
+# All configuration is injected at runtime via --env-file and volume mount
+docker run -i --rm \
+  --env-file .env \
+  -v "$(pwd)/certs:/certs:ro" \
+  qlik-sense-mcp-server
+```
+
+> `-i` is **mandatory** — without it the MCP stdio protocol cannot communicate.
+
+### Run with Docker Compose
+
+```bash
+# Build and start (reads .env and mounts ./certs automatically)
+docker compose up --build
+
+# Rebuild only the image without starting
+docker compose build
+```
+
+### MCP client configuration (Docker)
+
+To use the Docker container as the MCP server in a client such as Claude Desktop or Cursor, set the `command` to `docker run` with `-i`:
+
+```json
+{
+  "mcpServers": {
+    "qlik-sense": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "--env-file", "/absolute/path/to/.env",
+        "-v", "/absolute/path/to/certs:/certs:ro",
+        "qlik-sense-mcp-server"
+      ]
+    }
+  }
+}
+```
+
+### Docker environment variables
+
+All variables from [Configuration](#configuration) are supported.
+The defaults baked into the image are:
+
+| Variable | Default in image |
+|---|---|
+| `QLIK_REPOSITORY_PORT` | `4242` |
+| `QLIK_PROXY_PORT` | `4243` |
+| `QLIK_ENGINE_PORT` | `4747` |
+| `QLIK_VERIFY_SSL` | `true` |
+| `LOG_LEVEL` | `INFO` |
+
+All other variables (`QLIK_SERVER_URL`, `QLIK_USER_DIRECTORY`, `QLIK_USER_ID`, cert paths, etc.) **must** be provided at runtime — they are never baked into the image.
+
+### Certificate mount path
+
+The image exposes `/certs` as the default mount target. Override the cert paths freely:
+
+```bash
+docker run -i --rm \
+  --env-file .env \
+  -e QLIK_CLIENT_CERT_PATH=/secrets/client.pem \
+  -e QLIK_CLIENT_KEY_PATH=/secrets/client_key.pem \
+  -e QLIK_CA_CERT_PATH=/secrets/root.pem \
+  -v /my/custom/cert/dir:/secrets:ro \
+  qlik-sense-mcp-server
+```
+
 ## Usage
 
 ### Start Server
@@ -223,6 +320,9 @@ qlik-sense-mcp-server
 
 # From source (development)
 python -m qlik_sense_mcp_server.server
+
+# Using Docker
+docker run -i --rm --env-file .env -v "$(pwd)/certs:/certs:ro" qlik-sense-mcp-server
 ```
 
 ### Example Operations
@@ -572,6 +672,9 @@ qlik-sense-mcp/
 │   ├── client_key.pem
 │   └── root.pem
 ├── .env.example          # Configuration template
+├── .dockerignore         # Docker build exclusions
+├── docker-compose.yml    # Docker Compose configuration
+├── Dockerfile            # Multi-stage container build
 ├── mcp.json.example      # MCP configuration template
 ├── pyproject.toml        # Project dependencies
 └── README.md

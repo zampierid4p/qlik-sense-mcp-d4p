@@ -1,0 +1,62 @@
+# docker-compose.yml
+#
+# Avvio rapido:
+#   1. Copia questo file e .env.example → .env e compila i valori
+#   2. Metti i certificati Qlik Sense nella cartella ./certs/
+#   3. docker compose up --build
+#
+# Il server MCP usa il protocollo stdio, quindi il servizio deve
+# avere stdin_open: true e NON allocare un TTY (tty: false).
+# Il client MCP (es. Claude Desktop) lancerà il container con:
+#   docker run -i --env-file .env -v ./certs:/certs qlik-sense-mcp-server
+
+version: "3.9"
+
+services:
+  qlik-sense-mcp:
+    image: qlik-sense-mcp-server:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # MCP usa stdio: stdin deve essere aperto
+    stdin_open: true
+    tty: false
+
+    # ── Variabili d'ambiente ─────────────────────────────────────────────────
+    # Metodo 1 – file .env (consigliato, non committare il file)
+    env_file:
+      - .env          # crea da .env.example e compila i valori
+
+    # Metodo 2 – override esplicito (sovrascrive i valori del file .env)
+    environment:
+      # Decommentare e valorizzare per sovrascrivere
+      # QLIK_SERVER_URL: "https://your-qlik-server"
+      # QLIK_USER_DIRECTORY: "your-domain"
+      # QLIK_USER_ID: "your-username"
+      # QLIK_VERIFY_SSL: "true"
+      # QLIK_REPOSITORY_PORT: "4242"
+      # QLIK_PROXY_PORT: "4243"
+      # QLIK_ENGINE_PORT: "4747"
+      # QLIK_HTTP_PORT: "443"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+
+    # ── Volumi ──────────────────────────────────────────────────────────────
+    volumes:
+      # Monta la cartella locale dei certificati nel container.
+      # Assicurarsi che i percorsi corrispondano alle variabili
+      # QLIK_CLIENT_CERT_PATH, QLIK_CLIENT_KEY_PATH, QLIK_CA_CERT_PATH.
+      - type: bind
+        source: ${QLIK_CERTS_DIR:-./certs}
+        target: /certs
+        read_only: true
+
+    # ── Sicurezza ────────────────────────────────────────────────────────────
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    restart: "no"   # il client MCP gestisce il ciclo di vita del processo
