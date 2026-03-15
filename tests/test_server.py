@@ -50,6 +50,9 @@ class TestQlikSenseMCPServer:
         "QLIK_USER_DIRECTORY": "DOMAIN",
         "QLIK_USER_ID": "admin",
         "QLIK_VERIFY_SSL": "false",
+        "QLIK_CLIENT_CERT_PATH": "",
+        "QLIK_CLIENT_KEY_PATH": "",
+        "QLIK_CA_CERT_PATH": "",
     }, clear=False)
     def test_valid_config_creates_apis(self):
         server = QlikSenseMCPServer()

@@ -307,6 +307,56 @@ docker run -i --rm \
   qlik-sense-mcp-server
 ```
 
+### Remote MCP Gateway (HTTP + Token Auth)
+
+For remote LLM clients, use the included Streamable HTTP gateway.
+This mode exposes an HTTP MCP endpoint with token/passphrase authentication.
+
+1. Configure `.env`:
+
+```bash
+# Required for remote mode (set at least one)
+MCP_AUTH_TOKEN=replace-with-long-random-token
+# MCP_AUTH_PASSPHRASE=replace-with-strong-passphrase
+
+# Optional gateway settings
+MCP_GATEWAY_HOST=0.0.0.0
+MCP_GATEWAY_PORT=8080
+MCP_PUBLIC_PORT=8080
+MCP_GATEWAY_PATH=/mcp
+```
+
+2. Build and run remote gateway:
+
+```bash
+docker compose -f docker-compose.remote.yml up --build -d
+```
+
+3. Validate it is up:
+
+```bash
+curl http://localhost:8080/healthz
+```
+
+4. Example authenticated request headers for MCP clients:
+
+```http
+Authorization: Bearer <MCP_AUTH_TOKEN>
+```
+
+Alternative header:
+
+```http
+X-MCP-Token: <MCP_AUTH_TOKEN>
+```
+
+Notes:
+- Endpoint path is configurable with `MCP_GATEWAY_PATH` (default `/mcp`).
+- When calling manually with `curl`, use the slash-suffixed URL (`/mcp/`) to avoid `307` redirect.
+- Transport is MCP Streamable HTTP (supports GET/POST/DELETE).
+- Keep token/passphrase in external secret management where possible.
+- For production internet exposure, place this service behind TLS reverse proxy.
+
 ## Usage
 
 ### Start Server
@@ -320,6 +370,9 @@ qlik-sense-mcp-server
 
 # From source (development)
 python -m qlik_sense_mcp_server.server
+
+# Remote HTTP gateway (for external clients)
+qlik-sense-mcp-gateway
 
 # Using Docker
 docker run -i --rm --env-file .env -v "$(pwd)/certs:/certs:ro" qlik-sense-mcp-server
@@ -663,6 +716,7 @@ qlik-sense-mcp/
 ├── qlik_sense_mcp_server/
 │   ├── __init__.py
 │   ├── server.py          # Main MCP server
+│   ├── remote_gateway.py  # Remote Streamable HTTP gateway with token auth
 │   ├── config.py          # Configuration management
 │   ├── repository_api.py  # Repository API client (HTTP)
 │   ├── engine_api.py      # Engine API client (WebSocket)
@@ -674,6 +728,7 @@ qlik-sense-mcp/
 ├── .env.example          # Configuration template
 ├── .dockerignore         # Docker build exclusions
 ├── docker-compose.yml    # Docker Compose configuration
+├── docker-compose.remote.yml # Remote MCP gateway deployment
 ├── Dockerfile            # Multi-stage container build
 ├── mcp.json.example      # MCP configuration template
 ├── pyproject.toml        # Project dependencies

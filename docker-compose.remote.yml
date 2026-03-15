@@ -1,0 +1,40 @@
+services:
+  qlik-sense-mcp-remote:
+    image: qlik-sense-mcp-server:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["qlik-sense-mcp-gateway"]
+
+    env_file:
+      - .env
+
+    environment:
+      MCP_GATEWAY_HOST: "0.0.0.0"
+      MCP_GATEWAY_PORT: "8080"
+      MCP_GATEWAY_PATH: "${MCP_GATEWAY_PATH:-/mcp}"
+      # Set at least one of these in .env:
+      # MCP_AUTH_TOKEN=your-long-random-token
+      # MCP_AUTH_PASSPHRASE=your-passphrase
+      MCP_AUTH_TOKEN: "${MCP_AUTH_TOKEN:-}"
+      MCP_AUTH_PASSPHRASE: "${MCP_AUTH_PASSPHRASE:-}"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+
+    volumes:
+      - type: bind
+        source: ${QLIK_CERTS_DIR:-./certs}
+        target: /certs
+        read_only: true
+
+    ports:
+      - "${MCP_PUBLIC_PORT:-8080}:8080"
+
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    restart: unless-stopped

@@ -24,7 +24,9 @@ dependencies = [
     "httpx>=0.25.0",
     "pydantic>=2.0.0",
     "python-dotenv>=1.0.0",
-    "websocket-client>=1.6.0"
+    "websocket-client>=1.6.0",
+    "starlette>=0.37.0",
+    "uvicorn>=0.30.0"
 ]
 requires-python = ">=3.12"
 
@@ -44,6 +46,7 @@ Issues = "https://github.com/bintocher/qlik-sense-mcp/issues"
 
 [project.scripts]
 qlik-sense-mcp-server = "qlik_sense_mcp_server.server:main"
+qlik-sense-mcp-gateway = "qlik_sense_mcp_server.remote_gateway:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

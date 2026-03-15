@@ -61,4 +61,7 @@ ENV LOG_LEVEL="INFO"
 #   QLIK_HTTP_PORT
 
 # ── MCP uses stdio: the container must be run with -i (stdin open) ─────────────
+# Remote gateway mode (`qlik-sense-mcp-gateway`) listens on TCP 8080.
+EXPOSE 8080
+
 ENTRYPOINT ["qlik-sense-mcp-server"]
