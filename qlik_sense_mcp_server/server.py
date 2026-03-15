@@ -1,6 +1,7 @@
 """Main MCP Server for Qlik Sense APIs."""
 
 import asyncio
+import errno
 import json
 import ssl
 import sys
@@ -57,6 +58,17 @@ def _make_error(message: str, **extra: Any) -> Dict[str, Any]:
     return result
 
 
+def _format_init_exception(exc: Exception) -> str:
+    """Format initialization exceptions with file path details when available."""
+    filename = getattr(exc, "filename", None)
+    strerror = getattr(exc, "strerror", None)
+    if filename and strerror:
+        return f"{strerror}: {filename}"
+    if filename:
+        return f"{exc} (path: {filename})"
+    return str(exc)
+
+
 class QlikSenseMCPServer:
     """MCP Server for Qlik Sense Enterprise APIs."""
 
@@ -74,11 +86,15 @@ class QlikSenseMCPServer:
 
         if self.config_valid:
             try:
+                self._validate_cert_paths()
                 self.repository_api = QlikRepositoryAPI(self.config)
                 self.engine_api = QlikEngineAPI(self.config)
             except Exception as e:
                 # API clients will be None, tools will return errors
-                logging.getLogger(__name__).warning("Failed to initialize APIs: %s", e)
+                logging.getLogger(__name__).warning(
+                    "Failed to initialize APIs: %s",
+                    _format_init_exception(e),
+                )
 
         self.server = Server("qlik-sense-mcp-server")
         self._setup_handlers()
@@ -92,6 +108,24 @@ class QlikSenseMCPServer:
             self.config.user_directory and
             self.config.user_id
         )
+
+    def _validate_cert_paths(self) -> None:
+        """Validate certificate file paths when provided in configuration."""
+        cert_fields = [
+            ("QLIK_CLIENT_CERT_PATH", self.config.client_cert_path),
+            ("QLIK_CLIENT_KEY_PATH", self.config.client_key_path),
+            ("QLIK_CA_CERT_PATH", self.config.ca_cert_path),
+        ]
+
+        for env_name, path in cert_fields:
+            if not path:
+                continue
+            if not os.path.isfile(path):
+                raise FileNotFoundError(
+                    errno.ENOENT,
+                    f"{env_name} points to a missing file",
+                    path,
+                )
 
     def _create_httpx_client(self) -> httpx.Client:
         """Create an httpx client configured with Qlik certificates."""
