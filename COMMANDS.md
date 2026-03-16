@@ -16,6 +16,46 @@ qlik-sense-mcp-server
 qlik-sense-mcp-gateway
 ```
 
+## Python Environment
+
+Verify the installed version:
+
+```bash
+python3 --version
+```
+
+macOS – install Python 3.12 if missing or too old:
+
+```bash
+brew install python@3.12
+# optional: faster toolchain
+brew install uv
+```
+
+Linux (Debian / Ubuntu) – install Python 3.12 if missing or too old:
+
+```bash
+sudo apt update && sudo apt install python3.12 python3.12-venv python3.12-pip
+```
+
+Linux (RHEL / Fedora):
+
+```bash
+sudo dnf install python3.12
+```
+
+Optional – install `uv` on any platform:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Confirm before proceeding:
+
+```bash
+python3.12 --version  # must be 3.12 or newer
+```
+
 ## Repository Setup
 
 ```bash

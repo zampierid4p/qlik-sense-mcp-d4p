@@ -60,7 +60,100 @@ Qlik Sense MCP Server bridges Qlik Sense Enterprise with systems supporting Mode
 - Network access to Qlik Sense server (ports 4242 Repository, 4747 Engine)
 - Ensure your MCP client model can handle large JSON responses; prefer small limits in requests during testing
 
-### 2. Choose an Installation Method
+### 2. Verify and Install Python
+
+This project requires **Python 3.12 or newer**. Steps vary by platform.
+
+#### macOS
+
+Check the installed version:
+
+```bash
+python3 --version
+```
+
+If the output shows a version older than 3.12, or the command is not found, install Python 3.12 via Homebrew:
+
+```bash
+brew install python@3.12
+```
+
+If Homebrew is not installed, run this first:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+After installation check again:
+
+```bash
+python3.12 --version
+```
+
+Alternatively, download an installer directly from [python.org/downloads](https://www.python.org/downloads/).
+
+Optional – install `uv` for faster dependency management:
+
+```bash
+brew install uv
+# or, if you prefer the official installer:
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+#### Linux (Debian / Ubuntu)
+
+Check the installed version:
+
+```bash
+python3 --version
+```
+
+If the output shows a version older than 3.12 or the command is not found:
+
+```bash
+sudo apt update
+sudo apt install python3.12 python3.12-venv python3.12-pip
+```
+
+Verify installation:
+
+```bash
+python3.12 --version
+```
+
+If `python3.12` is not in your distro's package list, enable the deadsnakes PPA first:
+
+```bash
+sudo add-apt-repository ppa:deadsnakes/ppa
+sudo apt update
+sudo apt install python3.12 python3.12-venv python3.12-pip
+```
+
+#### Linux (RHEL / Fedora / Rocky)
+
+```bash
+sudo dnf install python3.12
+```
+
+Optional – install `uv` on Linux:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Make sure the `uv` binary is in your `PATH` afterwards (the installer prints the required export).
+
+#### Confirm before proceeding
+
+```bash
+# Should print 3.12.x or newer
+python3.12 --version
+
+# Optional – if uv was installed
+uv --version
+```
+
+### 3. Choose an Installation Method
 
 #### Option A: Run Directly with uvx (Recommended for quick use)
 
@@ -92,7 +185,7 @@ Notes:
 - If `uv` is not installed, the Makefile creates a local virtual environment and installs dependencies there
 - If needed, force a specific Python 3.12+ interpreter: `make dev PYTHON=python3.12`
 
-### 3. Create Runtime Configuration
+### 4. Create Runtime Configuration
 
 After installation, prepare local configuration and certificates:
 
@@ -102,7 +195,7 @@ mkdir -p certs
 # Copy client.pem, client_key.pem and root.pem into ./certs
 ```
 
-### 4. Update an Existing Local Clone
+### 5. Update an Existing Local Clone
 
 Use this sequence to update an existing checkout from Git:
 
