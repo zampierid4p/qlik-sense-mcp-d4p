@@ -5,9 +5,9 @@ set -euo pipefail
 # Usage:
 #   DOCKERHUB_USER=<user> ./scripts/push_dockerhub.sh
 # Optional:
-#   DOCKER_IMAGE_NAME=qlik-sense-mcp-server
-#   DOCKER_IMAGE_TAG=1.4.0
-#   PUSH_LATEST=true
+# DOCKER_IMAGE_NAME=qlik-sense-mcp-server
+# DOCKER_IMAGE_TAG=1.0.0
+# PUSH_LATEST=true
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
