@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [1.4.6] - 2026-03-16
+
+### Changed
+- Extended Linux setup instructions with explicit `uv` installation, PATH export steps, and validation command to resolve `uv: command not found` onboarding issues
+
 ## [1.4.5] - 2026-03-16
 
 ### Fixed
@@ -140,6 +145,7 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 - Updated `README.md` with API Reference for new tools and optional environment variables
 - Updated `mcp.json.example` autoApprove list to include new tools
 
+[1.4.6]: https://github.com/data4prime/qlik-sense-mcp-d4p/compare/v1.4.5...v1.4.6
 [1.4.5]: https://github.com/data4prime/qlik-sense-mcp-d4p/compare/v1.4.4...v1.4.5
 [1.4.4]: https://github.com/data4prime/qlik-sense-mcp-d4p/compare/v1.4.3...v1.4.4
 [1.4.3]: https://github.com/data4prime/qlik-sense-mcp-d4p/compare/v1.4.2...v1.4.3

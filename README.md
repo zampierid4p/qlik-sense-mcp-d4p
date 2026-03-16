@@ -129,19 +129,37 @@ sudo apt update
 sudo apt install python3.12 python3.12-venv python3.12-full
 ```
 
+Optional – install `uv` on Linux (recommended):
+
+```bash
+sudo apt update
+sudo apt install -y curl ca-certificates
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+If `uv --version` still reports command not found, add `~/.local/bin` to your shell `PATH`:
+
+```bash
+# Bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+
+# Zsh
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+Then verify:
+
+```bash
+uv --version
+```
+
 #### Linux (RHEL / Fedora / Rocky)
 
 ```bash
 sudo dnf install python3.12
 ```
-
-Optional – install `uv` on Linux:
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-Make sure the `uv` binary is in your `PATH` afterwards (the installer prints the required export).
 
 #### Confirm before proceeding
 
@@ -216,7 +234,7 @@ If you want to align to a specific release tag:
 
 ```bash
 git fetch --tags
-git checkout v1.4.5
+git checkout v1.4.6
 ```
 
 After updating the repository, refresh the local environment as needed:
@@ -565,7 +583,7 @@ docker login
 ```bash
 export DOCKERHUB_USER=your-dockerhub-user
 export IMAGE_NAME=qlik-sense-mcp-server
-export IMAGE_TAG=1.4.5
+export IMAGE_TAG=1.4.6
 export IMAGE_REF="$DOCKERHUB_USER/$IMAGE_NAME:$IMAGE_TAG"
 ```
 
@@ -1245,6 +1263,6 @@ SOFTWARE.
 
 ---
 
-**Project Status**: Production Ready | 10/10 Tools Working | v1.4.5
+**Project Status**: Production Ready | 10/10 Tools Working | v1.4.6
 
 **Installation**: `uvx qlik-sense-mcp-server`
