@@ -63,8 +63,14 @@ bootstrap-venv:
 		}; \
 		echo "Created virtual environment in $(VENV_DIR)"; \
 	fi; \
+	$(VENV_DIR)/bin/python -m pip --version >/dev/null 2>&1 || \
+	$(VENV_DIR)/bin/python -m ensurepip --upgrade >/dev/null 2>&1 || { \
+		echo "pip is not available inside $(VENV_DIR) and ensurepip failed."; \
+		echo "Fix: sudo apt install python3.12-full  (Debian/Ubuntu)  OR  delete $(VENV_DIR) and retry with UV=<command>."; \
+		exit 1; \
+	}; \
 	$(VENV_DIR)/bin/python -m pip install --upgrade pip setuptools wheel >/dev/null 2>&1 || { \
-		echo "pip is not available inside $(VENV_DIR). Install python3-venv/python3-pip or use UV=<command>."; \
+		echo "Failed to upgrade pip in $(VENV_DIR). Delete $(VENV_DIR) and rerun."; \
 		exit 1; \
 	}
 

@@ -112,7 +112,7 @@ If the output shows a version older than 3.12 or the command is not found:
 
 ```bash
 sudo apt update
-sudo apt install python3.12 python3.12-venv python3.12-pip
+sudo apt install python3.12 python3.12-venv python3.12-full
 ```
 
 Verify installation:
@@ -126,7 +126,7 @@ If `python3.12` is not in your distro's package list, enable the deadsnakes PPA 
 ```bash
 sudo add-apt-repository ppa:deadsnakes/ppa
 sudo apt update
-sudo apt install python3.12 python3.12-venv python3.12-pip
+sudo apt install python3.12 python3.12-venv python3.12-full
 ```
 
 #### Linux (RHEL / Fedora / Rocky)
