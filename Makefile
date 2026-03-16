@@ -1,8 +1,17 @@
 UV ?= uv
-PYTHON ?= python3
+PYTHON ?= $(shell \
+	if command -v python3.12 >/dev/null 2>&1; then command -v python3.12; \
+	elif [ -x /usr/bin/python3.12 ]; then printf '/usr/bin/python3.12'; \
+	elif [ -x /usr/local/bin/python3.12 ]; then printf '/usr/local/bin/python3.12'; \
+	elif [ -x /opt/homebrew/bin/python3.12 ]; then printf '/opt/homebrew/bin/python3.12'; \
+	elif [ -x /usr/bin/python3 ]; then printf '/usr/bin/python3'; \
+	elif command -v python3 >/dev/null 2>&1; then command -v python3; \
+	elif command -v python >/dev/null 2>&1; then command -v python; \
+	else printf python3; fi)
+VENV_DIR ?= .venv
 DOCKER ?= docker
 
-.PHONY: help install dev clean build test version-patch version-minor version-major publish create-pr git-clean docker-build docker-push docker-push-latest
+.PHONY: help install dev clean build test version-patch version-minor version-major publish create-pr git-clean docker-build docker-push docker-push-latest bootstrap-pip
 
 # Default target
 help:
@@ -19,27 +28,60 @@ help:
 	@echo "  docker-build   - Build Docker image locally"
 	@echo "  docker-push    - Build and push Docker image to Docker Hub"
 	@echo "  docker-push-latest - Push Docker image with version and latest tags"
+	@echo "  bootstrap-pip  - Ensure pip is available for the selected Python interpreter"
 	@echo "  create-pr      - Create pull request for current changes"
 	@echo "  git-clean      - Clean git history (DESTRUCTIVE)"
 	@echo ""
 	@echo "Overrides:"
 	@echo "  UV=<command>           Example: UV='python -m uv'"
 	@echo "  PYTHON=<command>       Example: PYTHON=python3"
+	@echo "  VENV_DIR=<path>        Example: VENV_DIR=.venv"
 	@echo "  DOCKER=<command>       Example Linux with sudo: DOCKER='sudo docker'"
 
 # Development setup
+bootstrap-pip:
+	@if $(PYTHON) -m pip --version >/dev/null 2>&1; then \
+		echo "pip already available for $(PYTHON)"; \
+	elif $(PYTHON) -m ensurepip --upgrade >/dev/null 2>&1; then \
+		echo "Bootstrapped pip with ensurepip for $(PYTHON)"; \
+	else \
+		echo "pip is not available for $(PYTHON). Install python3-pip or set UV=<command>."; \
+		exit 1; \
+	fi
+
+bootstrap-venv:
+	@$(PYTHON) -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)' >/dev/null 2>&1 || { \
+		echo "$(PYTHON) is too old. Python 3.12+ is required. Set PYTHON=python3.12 or use UV=<command>."; \
+		exit 1; \
+	}; \
+	if [ -x "$(VENV_DIR)/bin/python" ]; then \
+		echo "Virtual environment already available in $(VENV_DIR)"; \
+	else \
+		$(PYTHON) -m venv $(VENV_DIR) >/dev/null 2>&1 || { \
+			echo "Unable to create virtualenv in $(VENV_DIR). Install python3-venv (Linux) or set UV=<command>."; \
+			exit 1; \
+		}; \
+		echo "Created virtual environment in $(VENV_DIR)"; \
+	fi; \
+	$(VENV_DIR)/bin/python -m pip install --upgrade pip setuptools wheel >/dev/null 2>&1 || { \
+		echo "pip is not available inside $(VENV_DIR). Install python3-venv/python3-pip or use UV=<command>."; \
+		exit 1; \
+	}
+
 install:
 	@if $(UV) --version >/dev/null 2>&1; then \
 		$(UV) pip install -e .; \
 	else \
-		$(PYTHON) -m pip install -e .; \
+		$(MAKE) bootstrap-venv PYTHON='$(PYTHON)' VENV_DIR='$(VENV_DIR)'; \
+		$(VENV_DIR)/bin/python -m pip install -e .; \
 	fi
 
 dev:
 	@if $(UV) --version >/dev/null 2>&1; then \
 		$(UV) pip install -e ".[dev]"; \
 	else \
-		$(PYTHON) -m pip install -e ".[dev]"; \
+		$(MAKE) bootstrap-venv PYTHON='$(PYTHON)' VENV_DIR='$(VENV_DIR)'; \
+		$(VENV_DIR)/bin/python -m pip install -e ".[dev]"; \
 	fi
 
 # Clean build artifacts
@@ -55,7 +97,8 @@ build: clean
 	@if $(UV) --version >/dev/null 2>&1; then \
 		$(UV) run python -m build; \
 	else \
-		$(PYTHON) -m build; \
+		$(MAKE) bootstrap-venv PYTHON='$(PYTHON)' VENV_DIR='$(VENV_DIR)'; \
+		$(VENV_DIR)/bin/python -m build; \
 	fi
 
 # Run tests
@@ -63,7 +106,8 @@ test:
 	@if $(UV) --version >/dev/null 2>&1; then \
 		$(UV) run pytest tests/ -v; \
 	else \
-		$(PYTHON) -m pytest tests/ -v; \
+		$(MAKE) bootstrap-venv PYTHON='$(PYTHON)' VENV_DIR='$(VENV_DIR)'; \
+		$(VENV_DIR)/bin/python -m pytest tests/ -v; \
 	fi
 
 # Version bumping with PR creation
@@ -72,7 +116,8 @@ version-patch:
 	@if $(UV) --version >/dev/null 2>&1; then \
 		$(UV) run bump2version patch; \
 	else \
-		$(PYTHON) -m bumpversion patch; \
+		$(MAKE) bootstrap-venv PYTHON='$(PYTHON)' VENV_DIR='$(VENV_DIR)'; \
+		$(VENV_DIR)/bin/python -m bumpversion patch; \
 	fi
 	$(MAKE) create-pr
 
@@ -81,7 +126,8 @@ version-minor:
 	@if $(UV) --version >/dev/null 2>&1; then \
 		$(UV) run bump2version minor; \
 	else \
-		$(PYTHON) -m bumpversion minor; \
+		$(MAKE) bootstrap-venv PYTHON='$(PYTHON)' VENV_DIR='$(VENV_DIR)'; \
+		$(VENV_DIR)/bin/python -m bumpversion minor; \
 	fi
 	$(MAKE) create-pr
 
@@ -90,7 +136,8 @@ version-major:
 	@if $(UV) --version >/dev/null 2>&1; then \
 		$(UV) run bump2version major; \
 	else \
-		$(PYTHON) -m bumpversion major; \
+		$(MAKE) bootstrap-venv PYTHON='$(PYTHON)' VENV_DIR='$(VENV_DIR)'; \
+		$(VENV_DIR)/bin/python -m bumpversion major; \
 	fi
 	$(MAKE) create-pr
 
