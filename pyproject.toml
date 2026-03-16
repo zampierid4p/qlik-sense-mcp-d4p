@@ -8,7 +8,10 @@ version = "1.4.0"
 description = "MCP Server for Qlik Sense Enterprise APIs"
 readme = "README.md"
 license = {text = "MIT"}
-authors = [{name = "Stanislav Chernov", email = "bintocher@yandex.com"}]
+authors = [
+    {name = "Stanislav Chernov", email = "bintocher@yandex.com"},
+    {name = "Marco Zampieri (Data4Prime Srl)", email = "marco.zampieri@data4prime.com"}
+]
 keywords = ["mcp", "qlik", "qlik-sense", "analytics", "model-context-protocol"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -40,9 +43,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/bintocher/qlik-sense-mcp"
-Repository = "https://github.com/bintocher/qlik-sense-mcp"
-Issues = "https://github.com/bintocher/qlik-sense-mcp/issues"
+Homepage = "https://github.com/data4prime/qlik-sense-mcp-d4p"
+Repository = "https://github.com/data4prime/qlik-sense-mcp-d4p"
+Issues = "https://github.com/data4prime/qlik-sense-mcp-d4p/issues"
 
 [project.scripts]
 qlik-sense-mcp-server = "qlik_sense_mcp_server.server:main"

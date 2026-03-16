@@ -71,7 +71,7 @@ pip install qlik-sense-mcp-server
 
 #### From Source (Development)
 ```bash
-git clone https://github.com/bintocher/qlik-sense-mcp.git
+git clone https://github.com/data4prime/qlik-sense-mcp-d4p.git
 cd qlik-sense-mcp
 make dev
 ```

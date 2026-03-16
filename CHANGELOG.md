@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [1.4.0] - 2026-03-16
+
+### Added
+- Remote MCP gateway over Streamable HTTP with dedicated `qlik-sense-mcp-gateway` entrypoint
+- Token/passphrase protection for remote MCP access via `Authorization: Bearer` or `X-MCP-Token`
+- Docker deployment assets for remote mode, including `docker-compose.remote.yml`
+- Docker Hub publishing workflow via Makefile targets: `docker-build`, `docker-push`, `docker-push-latest`
+- Shell helper script `scripts/push_dockerhub.sh` for building and pushing images to Docker Hub
+- Test coverage for remote gateway auth/path helpers
+
+### Changed
+- Upgraded package metadata for the `1.4.0` release and extended project authors list with Data4Prime maintainer information
+- Added `starlette` and `uvicorn` runtime dependencies to support remote HTTP transport
+- Docker image metadata now points to the `data4prime/qlik-sense-mcp-d4p` repository
+- Repository URLs in project metadata, CLI help, changelog links and documentation now reference `data4prime/qlik-sense-mcp-d4p`
+- README significantly expanded with:
+	- local Docker usage
+	- private Docker Hub deployment sequence
+	- remote gateway startup and validation steps
+	- Claude Desktop remote MCP configuration examples
+
+### Fixed
+- Clearer initialization diagnostics when certificate files are missing, including the exact missing path
+- Docker Hub publish targets now accept both `DOCKERHUB_USER` and `DOCKERHUB` variables and fail with explicit validation messages instead of shell error `127`
+
+### Security
+- Remote MCP deployment now supports configurable access control through `MCP_AUTH_TOKEN` or `MCP_AUTH_PASSPHRASE`
+- Added gitignore rules for local Docker Hub credential/config helper files
+
 ## [1.3.4] - 2025-10-10
 
 ### Added
@@ -69,7 +98,8 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 - Updated `README.md` with API Reference for new tools and optional environment variables
 - Updated `mcp.json.example` autoApprove list to include new tools
 
-[1.3.4]: https://github.com/bintocher/qlik-sense-mcp/compare/v1.3.3...v1.3.4
-[1.3.2]: https://github.com/bintocher/qlik-sense-mcp/compare/v1.3.1...v1.3.2
-[1.3.1]: https://github.com/bintocher/qlik-sense-mcp/compare/v1.3.0...v1.3.1
-[1.3.0]: https://github.com/bintocher/qlik-sense-mcp/compare/v1.2.0...v1.3.0
+[1.4.0]: https://github.com/data4prime/qlik-sense-mcp-d4p/compare/v1.3.4...v1.4.0
+[1.3.4]: https://github.com/data4prime/qlik-sense-mcp-d4p/compare/v1.3.3...v1.3.4
+[1.3.2]: https://github.com/data4prime/qlik-sense-mcp-d4p/compare/v1.3.1...v1.3.2
+[1.3.1]: https://github.com/data4prime/qlik-sense-mcp-d4p/compare/v1.3.0...v1.3.1
+[1.3.0]: https://github.com/data4prime/qlik-sense-mcp-d4p/compare/v1.2.0...v1.3.0

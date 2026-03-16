@@ -19,7 +19,7 @@ FROM python:3.12-slim AS runtime
 # Metadata
 LABEL org.opencontainers.image.title="Qlik Sense MCP Server" \
       org.opencontainers.image.description="MCP Server for Qlik Sense Enterprise APIs" \
-      org.opencontainers.image.source="https://github.com/bintocher/qlik-sense-mcp"
+      org.opencontainers.image.source="https://github.com/data4prime/qlik-sense-mcp-d4p"
 
 # Create a non-root user
 RUN addgroup --system mcp && adduser --system --ingroup mcp --no-create-home mcp

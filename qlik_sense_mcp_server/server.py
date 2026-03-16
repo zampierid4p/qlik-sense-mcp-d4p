@@ -1493,7 +1493,7 @@ AVAILABLE TOOLS:
     Total: 10 tools for Qlik Sense analytics operations
 
 MORE INFO:
-    GitHub: https://github.com/bintocher/qlik-sense-mcp
+    GitHub: https://github.com/data4prime/qlik-sense-mcp-d4p
     PyPI: https://pypi.org/project/qlik-sense-mcp-server/
 """
     # Use stderr for help output to avoid mixing with MCP protocol output
