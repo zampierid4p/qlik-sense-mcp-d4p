@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [1.4.3] - 2026-03-16
+
+### Changed
+- Refined README installation, configuration, Docker, usage, troubleshooting, performance, and security guidance into a more linear operational sequence
+- Updated COMMANDS.md to match the current repository workflow for local setup, Docker runtime, release updates, and Docker Hub publishing
+- Finalized Makefile fallback behavior for Python 3.12+ environments by preferring a local virtualenv when `uv` is unavailable
+
+### Fixed
+- Added `.venv-test` to `.gitignore` so local test virtual environments no longer leave the repository dirty
+
 ## [1.4.2] - 2026-03-16
 
 ### Changed
@@ -118,6 +128,7 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 - Updated `README.md` with API Reference for new tools and optional environment variables
 - Updated `mcp.json.example` autoApprove list to include new tools
 
+[1.4.3]: https://github.com/data4prime/qlik-sense-mcp-d4p/compare/v1.4.2...v1.4.3
 [1.4.2]: https://github.com/data4prime/qlik-sense-mcp-d4p/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/data4prime/qlik-sense-mcp-d4p/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/data4prime/qlik-sense-mcp-d4p/compare/v1.3.4...v1.4.0

@@ -96,7 +96,7 @@ DOCKERHUB=datasynapsi make docker-push-latest
 
 Optional overrides:
 - `DOCKER_IMAGE_NAME=qlik-sense-mcp-server`
-- `DOCKER_IMAGE_TAG=1.4.2`
+- `DOCKER_IMAGE_TAG=1.4.3`
 - `DOCKER='sudo docker'` on Linux if needed
 
 ## Git Update Workflow
@@ -112,7 +112,7 @@ git fetch --all --tags
 git pull --rebase
 
 # Move to a specific release tag
-git checkout v1.4.2
+git checkout v1.4.3
 ```
 
 After updating code, refresh local dependencies and images as needed:
