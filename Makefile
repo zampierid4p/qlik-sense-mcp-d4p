@@ -1,3 +1,6 @@
+UV ?= uv
+DOCKER ?= docker
+
 .PHONY: help install dev clean build test version-patch version-minor version-major publish create-pr git-clean docker-build docker-push docker-push-latest
 
 # Default target
@@ -17,13 +20,17 @@ help:
 	@echo "  docker-push-latest - Push Docker image with version and latest tags"
 	@echo "  create-pr      - Create pull request for current changes"
 	@echo "  git-clean      - Clean git history (DESTRUCTIVE)"
+	@echo ""
+	@echo "Overrides:"
+	@echo "  UV=<command>           Example: UV='python -m uv'"
+	@echo "  DOCKER=<command>       Example Linux with sudo: DOCKER='sudo docker'"
 
 # Development setup
 install:
-	uv pip install -e .
+	$(UV) pip install -e .
 
 dev:
-	uv pip install -e ".[dev]"
+	$(UV) pip install -e ".[dev]"
 
 # Clean build artifacts
 clean:
@@ -35,26 +42,26 @@ clean:
 
 # Build package
 build: clean
-	uv run python -m build
+	$(UV) run python -m build
 
 # Run tests
 test:
-	uv run pytest tests/ -v
+	$(UV) run pytest tests/ -v
 
 # Version bumping with PR creation
 version-patch:
 	@echo "Bumping patch version..."
-	uv run bump2version patch
+	$(UV) run bump2version patch
 	$(MAKE) create-pr
 
 version-minor:
 	@echo "Bumping minor version..."
-	uv run bump2version minor
+	$(UV) run bump2version minor
 	$(MAKE) create-pr
 
 version-major:
 	@echo "Bumping major version..."
-	uv run bump2version major
+	$(UV) run bump2version major
 	$(MAKE) create-pr
 
 # Create pull request
@@ -78,7 +85,7 @@ docker-build:
 	@IMAGE_NAME=$${DOCKER_IMAGE_NAME:-qlik-sense-mcp-server}; \
 	TAG=$${DOCKER_IMAGE_TAG:-$$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')}; \
 	echo "Building $$IMAGE_NAME:$$TAG"; \
-	docker build -t "$$IMAGE_NAME:$$TAG" .
+	$(DOCKER) build -t "$$IMAGE_NAME:$$TAG" .
 
 # Docker Hub push (single tag)
 docker-push: docker-build
@@ -89,9 +96,9 @@ docker-push: docker-build
 	LOCAL_IMAGE="$$IMAGE_NAME:$$TAG"; \
 	REMOTE_IMAGE="$$DOCKERHUB_USER/$$IMAGE_NAME:$$TAG"; \
 	echo "Tagging $$LOCAL_IMAGE -> $$REMOTE_IMAGE"; \
-	docker tag "$$LOCAL_IMAGE" "$$REMOTE_IMAGE"; \
+	$(DOCKER) tag "$$LOCAL_IMAGE" "$$REMOTE_IMAGE"; \
 	echo "Pushing $$REMOTE_IMAGE"; \
-	docker push "$$REMOTE_IMAGE"
+	$(DOCKER) push "$$REMOTE_IMAGE"
 
 # Docker Hub push (version + latest)
 docker-push-latest: docker-build
@@ -103,18 +110,18 @@ docker-push-latest: docker-build
 	REMOTE_VERSION="$$DOCKERHUB_USER/$$IMAGE_NAME:$$TAG"; \
 	REMOTE_LATEST="$$DOCKERHUB_USER/$$IMAGE_NAME:latest"; \
 	echo "Tagging $$LOCAL_IMAGE -> $$REMOTE_VERSION"; \
-	docker tag "$$LOCAL_IMAGE" "$$REMOTE_VERSION"; \
+	$(DOCKER) tag "$$LOCAL_IMAGE" "$$REMOTE_VERSION"; \
 	echo "Tagging $$LOCAL_IMAGE -> $$REMOTE_LATEST"; \
-	docker tag "$$LOCAL_IMAGE" "$$REMOTE_LATEST"; \
+	$(DOCKER) tag "$$LOCAL_IMAGE" "$$REMOTE_LATEST"; \
 	echo "Pushing $$REMOTE_VERSION"; \
-	docker push "$$REMOTE_VERSION"; \
+	$(DOCKER) push "$$REMOTE_VERSION"; \
 	echo "Pushing $$REMOTE_LATEST"; \
-	docker push "$$REMOTE_LATEST"
+	$(DOCKER) push "$$REMOTE_LATEST"
 
 # Clean git history (DESTRUCTIVE)
 git-clean:
 	@echo "WARNING: This will completely reset git history!"
-	@read -p "Are you sure? (y/N): " confirm && [ "$$confirm" = "y" ] || exit 1
+	@printf "Are you sure? (y/N): "; read confirm; [ "$$confirm" = "y" ] || exit 1
 	rm -rf .git
 	git init
 	git add .
