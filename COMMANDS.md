@@ -1,59 +1,131 @@
 # Quick Commands Reference
 
-## Installation and Usage
+## Local Installation
 
 ```bash
-# Install and run with uvx (recommended)
+# Run latest published version without installing into the main environment
 uvx qlik-sense-mcp-server
 
-# Install from PyPI
+# Install package globally or inside an existing environment
 pip install qlik-sense-mcp-server
 
-# Run installed package
+# Start stdio server after installation
 qlik-sense-mcp-server
+
+# Start remote HTTP gateway after installation
+qlik-sense-mcp-gateway
 ```
 
-## Development
+## Repository Setup
 
 ```bash
-# Setup development environment
+# Clone the repository
+git clone https://github.com/data4prime/qlik-sense-mcp-d4p.git
+cd qlik-sense-mcp-d4p
+
+# Create development environment
 make dev
 
-# See all available commands
+# Show available targets
 make help
+```
 
-# Build package
+Notes:
+- Python 3.12+ is required
+- If `uv` is unavailable, `make dev` creates a local virtual environment automatically
+- To force a specific interpreter: `make dev PYTHON=python3.12`
+
+## Runtime Configuration
+
+```bash
+# Copy template and create local certificate folder
+cp .env.example .env
+mkdir -p certs
+```
+
+For local Python execution, use absolute host paths in `.env` for certificate variables.
+For Docker or Docker Compose, use container paths such as `/certs/client.pem`.
+
+## Docker
+
+```bash
+# Build image with version from pyproject.toml
+make docker-build
+
+# Or build manually with a fixed local tag
+docker build -t qlik-sense-mcp-server .
+
+# Run stdio container
+docker run -i --rm --env-file .env -v "$(pwd)/certs:/certs:ro" qlik-sense-mcp-server
+
+# Start remote HTTP gateway
+docker compose -f docker-compose.remote.yml up --build -d
+
+# Check gateway health
+curl http://localhost:8080/healthz
+```
+
+## Testing and Build
+
+```bash
+# Run test suite
+make test
+
+# Build distribution artifacts
 make build
 ```
 
 ## Version Management
 
 ```bash
-# Bump version and create PR
-make version-patch  # 1.0.0 -> 1.0.1
-make version-minor  # 1.0.0 -> 1.1.0
-make version-major  # 1.0.0 -> 2.0.0
+# Bump version and open release PR workflow
+make version-patch
+make version-minor
+make version-major
 ```
 
-## Publishing
+## Docker Hub Publishing
 
 ```bash
-# After merging PR with version bump
-git tag v1.0.1
-git push origin v1.0.1
+# Push version tag only
+DOCKERHUB=datasynapsi make docker-push
 
-# GitHub Actions will automatically publish to PyPI
+# Push version tag and latest
+DOCKERHUB=datasynapsi make docker-push-latest
 ```
 
-## Git History Reset
+Optional overrides:
+- `DOCKER_IMAGE_NAME=qlik-sense-mcp-server`
+- `DOCKER_IMAGE_TAG=1.4.2`
+- `DOCKER='sudo docker'` on Linux if needed
+
+## Git Update Workflow
 
 ```bash
-# Clean all git history (DESTRUCTIVE)
+# Inspect local changes
+git status
+
+# Refresh branches and tags
+git fetch --all --tags
+
+# Update current branch
+git pull --rebase
+
+# Move to a specific release tag
+git checkout v1.4.2
+```
+
+After updating code, refresh local dependencies and images as needed:
+
+```bash
+make dev
+make docker-build
+docker compose -f docker-compose.remote.yml up --build -d
+```
+
+## Dangerous Maintenance
+
+```bash
+# Reset repository history completely (destructive)
 make git-clean
 ```
-
-## Prerequisites for Development
-
-- Python 3.12+
-- GitHub CLI (`gh`) for PR creation
-- PyPI account and API token in GitHub secrets (`PYPI_API_TOKEN`)

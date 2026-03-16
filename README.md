@@ -52,24 +52,34 @@ Qlik Sense MCP Server bridges Qlik Sense Enterprise with systems supporting Mode
 
 ## Installation
 
-### Quick Start with uvx (Recommended)
+### 1. Check Requirements
 
-The easiest way to use Qlik Sense MCP Server is with uvx:
+- Python 3.12+
+- Qlik Sense Enterprise
+- Valid certificates for authentication
+- Network access to Qlik Sense server (ports 4242 Repository, 4747 Engine)
+- Ensure your MCP client model can handle large JSON responses; prefer small limits in requests during testing
+
+### 2. Choose an Installation Method
+
+#### Option A: Run Directly with uvx (Recommended for quick use)
 
 ```bash
 uvx qlik-sense-mcp-server
 ```
 
-This command will automatically install and run the latest version without affecting your system Python environment.
+This installs and runs the latest version without modifying your main Python environment.
 
-### Alternative Installation Methods
+#### Option B: Install from PyPI
 
-#### From PyPI
 ```bash
 pip install qlik-sense-mcp-server
 ```
 
-#### From Source (Development)
+Use this when you want the CLI available as a normal installed command.
+
+#### Option C: Clone the Repository for Development or Custom Deployment
+
 ```bash
 git clone https://github.com/data4prime/qlik-sense-mcp-d4p.git
 cd qlik-sense-mcp-d4p
@@ -78,14 +88,23 @@ make dev
 
 Notes:
 - `uv` is supported but not required
-- If `uv` is not installed, the Makefile automatically falls back to `python3 -m pip`
-- On Linux you can force a specific interpreter, for example: `make dev PYTHON=python3`
+- If `uv` is installed, `make dev` uses it automatically
+- If `uv` is not installed, the Makefile creates a local virtual environment and installs dependencies there
+- If needed, force a specific Python 3.12+ interpreter: `make dev PYTHON=python3.12`
 
-### Update Git Repository
+### 3. Create Runtime Configuration
 
-Use this sequence to update an existing local clone to the latest version.
+After installation, prepare local configuration and certificates:
 
-#### macOS / Linux
+```bash
+cp .env.example .env
+mkdir -p certs
+# Copy client.pem, client_key.pem and root.pem into ./certs
+```
+
+### 4. Update an Existing Local Clone
+
+Use this sequence to update an existing checkout from Git:
 
 ```bash
 cd /absolute/path/to/qlik-sense-mcp-d4p
@@ -93,7 +112,7 @@ cd /absolute/path/to/qlik-sense-mcp-d4p
 # Inspect local changes before updating
 git status
 
-# Fetch all remote refs and tags
+# Fetch branches and tags
 git fetch --all --tags
 
 # Update the current branch
@@ -110,14 +129,9 @@ git checkout v1.4.2
 After updating the repository, refresh the local environment as needed:
 
 ```bash
-# Python development environment
 make dev
-
-# Rebuild local Docker image
 make docker-build
 ```
-
-`make dev` will use `uv` when available; otherwise it falls back automatically to `python3 -m pip install -e ".[dev]"`.
 
 If you use the remote gateway image or Docker Compose, rebuild/restart after pulling changes:
 
@@ -127,31 +141,19 @@ docker compose -f docker-compose.remote.yml up --build -d
 
 If your local branch contains uncommitted changes, commit or stash them before `git pull --rebase`.
 
-### System Requirements
-
-- Python 3.12+
-- Qlik Sense Enterprise
-- Valid certificates for authentication
-- Network access to Qlik Sense server (ports 4242 Repository, 4747 Engine)
-- Ensure your MCP client model can handle large JSON responses; prefer small limits in requests during testing
-
-### Setup
-
-1. **Setup certificates**
-```bash
-mkdir certs
-# Copy your Qlik Sense certificates to certs/ directory
-```
-
-2. **Create configuration**
-```bash
-cp .env.example .env
-# Edit .env with your settings
-```
-
 ## Configuration
 
-### Environment Variables (.env)
+Use this section after completing Installation. The runtime configuration is the same whether you start the server from Python, Docker, or Docker Compose; only the certificate paths change depending on where the process runs.
+
+### 1. Edit the `.env` File
+
+Start from the provided template:
+
+```bash
+cp .env.example .env
+```
+
+Minimum example:
 
 ```bash
 # Server connection
@@ -175,18 +177,47 @@ QLIK_HTTP_PORT=443
 QLIK_VERIFY_SSL=false
 ```
 
-### Optional Environment Variables
+Certificate path rules:
+- local Python or `uvx`: use absolute host paths such as `/Users/you/.../certs/client.pem` or `/home/you/.../certs/client.pem`
+- Docker or Docker Compose: use container-internal paths such as `/certs/client.pem`, `/certs/client_key.pem`, `/certs/root.pem`
+
+### 2. Optional Runtime Settings
 
 ```bash
 # Logging level (default: INFO)
 LOG_LEVEL=INFO
 
+# HTTP request timeout (default: 10.0)
+QLIK_HTTP_TIMEOUT=10.0
+
 # Engine WebSocket timeouts and retries
 QLIK_WS_TIMEOUT=8.0     # seconds
 QLIK_WS_RETRIES=2       # number of endpoints to try
+
+# Remote gateway settings (only for qlik-sense-mcp-gateway)
+# MCP_AUTH_TOKEN=replace-with-long-random-token
+# MCP_AUTH_PASSPHRASE=replace-with-strong-passphrase
+# MCP_GATEWAY_HOST=0.0.0.0
+# MCP_GATEWAY_PORT=8080
+# MCP_PUBLIC_PORT=8080
+# MCP_GATEWAY_PATH=/mcp
 ```
 
-### MCP Configuration
+### 3. Variable Reference
+
+| Group | Variables | Notes |
+|---|---|---|
+| Required connection | `QLIK_SERVER_URL`, `QLIK_USER_DIRECTORY`, `QLIK_USER_ID` | Always required |
+| Certificates | `QLIK_CLIENT_CERT_PATH`, `QLIK_CLIENT_KEY_PATH`, `QLIK_CA_CERT_PATH` | Required in production; if CA path is omitted, SSL verification is disabled |
+| Network | `QLIK_REPOSITORY_PORT`, `QLIK_PROXY_PORT`, `QLIK_ENGINE_PORT`, `QLIK_HTTP_PORT` | `QLIK_HTTP_PORT` is only used for metadata endpoint requests |
+| Security | `QLIK_VERIFY_SSL` | Use `false` only for controlled testing scenarios |
+| Timeouts | `QLIK_HTTP_TIMEOUT`, `QLIK_WS_TIMEOUT`, `QLIK_WS_RETRIES` | Tune only if your Qlik environment is slow or unstable |
+| Logging | `LOG_LEVEL` | Supported values: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| Remote gateway | `MCP_AUTH_TOKEN`, `MCP_AUTH_PASSPHRASE`, `MCP_GATEWAY_HOST`, `MCP_GATEWAY_PORT`, `MCP_PUBLIC_PORT`, `MCP_GATEWAY_PATH` | Used only when exposing the remote HTTP gateway |
+
+### 4. MCP Client Configuration
+
+For local stdio integration, create an MCP client configuration like this:
 
 Create `mcp.json` file for MCP client integration:
 
@@ -231,41 +262,17 @@ Create `mcp.json` file for MCP client integration:
 }
 ```
 
-### Environment Variables Configuration
-
-The server requires the following environment variables for configuration:
-
-#### Required Variables
-- **`QLIK_SERVER_URL`** - Qlik Sense server URL (e.g., `https://qlik.company.com`)
-- **`QLIK_USER_DIRECTORY`** - User directory for authentication (e.g., `COMPANY`)
-- **`QLIK_USER_ID`** - User ID for authentication (e.g., `your-username`)
-
-#### Certificate Configuration (Required for production)
-- **`QLIK_CLIENT_CERT_PATH`** - Absolute path to client certificate file (`.pem` format)
-- **`QLIK_CLIENT_KEY_PATH`** - Absolute path to client private key file (`.pem` format)
-- **`QLIK_CA_CERT_PATH`** - Absolute path to CA certificate file (`.pem` format). If not specified, SSL certificate verification will be disabled
-
-#### Network Configuration
-- **`QLIK_REPOSITORY_PORT`** - Repository API port (default: `4242`)
-- **`QLIK_PROXY_PORT`** - Proxy API port for authentication (default: `4243`)
-- **`QLIK_ENGINE_PORT`** - Engine API port for WebSocket connections (default: `4747`)
-- **`QLIK_HTTP_PORT`** - HTTP API port for metadata requests (optional, only used for `/api/v1/apps/{id}/data/metadata` endpoint)
-
-#### SSL and Security
-- **`QLIK_VERIFY_SSL`** - Verify SSL certificates (`true`/`false`, default: `true`)
-
-#### Timeouts and Performance
-- **`QLIK_HTTP_TIMEOUT`** - HTTP request timeout in seconds (default: `10.0`)
-- **`QLIK_WS_TIMEOUT`** - WebSocket connection timeout in seconds (default: `8.0`)
-- **`QLIK_WS_RETRIES`** - Number of WebSocket connection retry attempts (default: `2`)
-
-#### Logging
-- **`LOG_LEVEL`** - Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, default: `INFO`)
+The repository also includes `mcp.json.example` and `claude_desktop_remote.example.json` as starting points for local or remote client integrations.
 
 ## Docker
 
-The repository includes a multi-stage `Dockerfile`, a `docker-compose.yml` and a `.dockerignore`.
-The server uses the MCP **stdio** protocol, so the container must always be started with an open stdin (`-i`).
+The repository includes a multi-stage `Dockerfile`, a `docker-compose.yml`, a `docker-compose.remote.yml`, and a `.dockerignore`.
+
+Choose the container mode that matches your client:
+- stdio mode for local MCP clients launched as a command, such as Claude Desktop or Cursor
+- remote HTTP gateway mode for external clients that connect over MCP Streamable HTTP
+
+The stdio container must always be started with an open stdin using `-i`.
 
 ### Prerequisites
 
@@ -304,13 +311,151 @@ Notes:
 - The bind-mount examples use `$(pwd)`, which works on both macOS and Linux
 - If mounted certificate files are not readable inside the container, verify host-side file permissions before troubleshooting TLS
 
-### Build the image
+### 1. Prepare Runtime Files
+
+```bash
+cp .env.example .env
+mkdir -p certs
+```
+
+Then copy `client.pem`, `client_key.pem`, and `root.pem` into `./certs` and set Docker-friendly certificate paths in `.env`:
+
+```bash
+QLIK_CLIENT_CERT_PATH=/certs/client.pem
+QLIK_CLIENT_KEY_PATH=/certs/client_key.pem
+QLIK_CA_CERT_PATH=/certs/root.pem
+```
+
+### 2. Build the Image
 
 ```bash
 docker build -t qlik-sense-mcp-server .
 ```
 
-### Deploy from Private Docker Hub Repository
+### 3. Run in Stdio Mode
+
+Standalone container:
+
+```bash
+docker run -i --rm \
+  --env-file .env \
+  -v "$(pwd)/certs:/certs:ro" \
+  qlik-sense-mcp-server
+```
+
+With Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+Use stdio mode when your MCP client launches the server process directly.
+
+### 4. Configure a Local MCP Client to Use Docker
+
+To use the Docker container as the MCP server in a client such as Claude Desktop or Cursor, set the `command` to `docker run` with `-i`:
+
+```json
+{
+  "mcpServers": {
+    "qlik-sense": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "--env-file", "/absolute/path/to/.env",
+        "-v", "/absolute/path/to/certs:/certs:ro",
+        "qlik-sense-mcp-server"
+      ]
+    }
+  }
+}
+```
+
+Path notes:
+- macOS example absolute paths usually look like `/Users/<user>/projects/qlik-sense-mcp-d4p/.env`
+- Linux example absolute paths usually look like `/home/<user>/projects/qlik-sense-mcp-d4p/.env`
+
+### 5. Run the Remote MCP Gateway
+
+Set at least one remote credential in `.env` or through the shell:
+
+```bash
+MCP_AUTH_TOKEN=replace-with-long-random-token
+# or
+MCP_AUTH_PASSPHRASE=replace-with-strong-passphrase
+```
+
+Start the gateway:
+
+```bash
+docker compose -f docker-compose.remote.yml up --build -d
+```
+
+Validate it:
+
+```bash
+curl http://localhost:8080/healthz
+```
+
+Authentication headers accepted by the gateway:
+
+```http
+Authorization: Bearer <MCP_AUTH_TOKEN>
+```
+
+Alternative header:
+
+```http
+X-MCP-Token: <MCP_AUTH_TOKEN>
+```
+
+Use the slash-suffixed endpoint URL `/mcp/` when testing manually to avoid redirect responses.
+
+### 6. Claude Desktop Remote Configuration
+
+Use the remote gateway URL and send the bearer token in headers.
+
+Typical config file locations:
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Linux: `~/.config/Claude/claude_desktop_config.json` if your Claude Desktop build uses the standard XDG config path
+
+```json
+{
+  "mcpServers": {
+    "qlik-sense-remote": {
+      "transport": "streamable-http",
+      "url": "https://your-mcp-host.example.com/mcp/",
+      "headers": {
+        "Authorization": "Bearer YOUR_MCP_AUTH_TOKEN"
+      }
+    }
+  }
+}
+```
+
+Quick local test after `docker compose -f docker-compose.remote.yml up -d`:
+
+```json
+{
+  "mcpServers": {
+    "qlik-sense-remote": {
+      "transport": "streamable-http",
+      "url": "http://localhost:8080/mcp/",
+      "headers": {
+        "Authorization": "Bearer YOUR_MCP_AUTH_TOKEN"
+      }
+    }
+  }
+}
+```
+
+Notes:
+- endpoint path is configurable with `MCP_GATEWAY_PATH` and defaults to `/mcp`
+- the gateway supports MCP Streamable HTTP with `GET`, `POST`, and `DELETE`
+- keep token or passphrase in external secret management where possible
+- place the gateway behind TLS reverse proxy before exposing it on the internet
+
+### 7. Deploy from a Private Docker Hub Repository
 
 Use this sequence when your image is published to a private Docker Hub repository.
 
@@ -384,52 +529,6 @@ DOCKER_IMAGE_REF="$IMAGE_REF" docker compose -f docker-compose.remote.yml up -d 
 
 Then set in compose file `image: ${DOCKER_IMAGE_REF}` (replace static image value) or export the variable in your shell before startup.
 
-### Run with Docker (standalone)
-
-```bash
-# All configuration is injected at runtime via --env-file and volume mount
-docker run -i --rm \
-  --env-file .env \
-  -v "$(pwd)/certs:/certs:ro" \
-  qlik-sense-mcp-server
-```
-
-> `-i` is **mandatory** — without it the MCP stdio protocol cannot communicate.
-
-### Run with Docker Compose
-
-```bash
-# Build and start (reads .env and mounts ./certs automatically)
-docker compose up --build
-
-# Rebuild only the image without starting
-docker compose build
-```
-
-### MCP client configuration (Docker)
-
-To use the Docker container as the MCP server in a client such as Claude Desktop or Cursor, set the `command` to `docker run` with `-i`:
-
-```json
-{
-  "mcpServers": {
-    "qlik-sense": {
-      "command": "docker",
-      "args": [
-        "run", "-i", "--rm",
-        "--env-file", "/absolute/path/to/.env",
-        "-v", "/absolute/path/to/certs:/certs:ro",
-        "qlik-sense-mcp-server"
-      ]
-    }
-  }
-}
-```
-
-Path notes:
-- macOS example absolute paths usually look like `/Users/<user>/projects/qlik-sense-mcp-d4p/.env`
-- Linux example absolute paths usually look like `/home/<user>/projects/qlik-sense-mcp-d4p/.env`
-
 ### Docker environment variables
 
 All variables from [Configuration](#configuration) are supported.
@@ -459,103 +558,13 @@ docker run -i --rm \
   qlik-sense-mcp-server
 ```
 
-### Remote MCP Gateway (HTTP + Token Auth)
-
-For remote LLM clients, use the included Streamable HTTP gateway.
-This mode exposes an HTTP MCP endpoint with token/passphrase authentication.
-
-1. Configure `.env`:
-
-```bash
-# Required for remote mode (set at least one)
-MCP_AUTH_TOKEN=replace-with-long-random-token
-# MCP_AUTH_PASSPHRASE=replace-with-strong-passphrase
-
-# Optional gateway settings
-MCP_GATEWAY_HOST=0.0.0.0
-MCP_GATEWAY_PORT=8080
-MCP_PUBLIC_PORT=8080
-MCP_GATEWAY_PATH=/mcp
-```
-
-2. Build and run remote gateway:
-
-```bash
-docker compose -f docker-compose.remote.yml up --build -d
-```
-
-3. Validate it is up:
-
-```bash
-curl http://localhost:8080/healthz
-```
-
-4. Example authenticated request headers for MCP clients:
-
-```http
-Authorization: Bearer <MCP_AUTH_TOKEN>
-```
-
-Alternative header:
-
-```http
-X-MCP-Token: <MCP_AUTH_TOKEN>
-```
-
-### Claude Desktop (MCP Remote)
-
-Use the remote gateway URL and send the bearer token in headers.
-
-Typical config file locations:
-- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- Linux: `~/.config/Claude/claude_desktop_config.json` if your Claude Desktop build uses the standard XDG config path
-
-```json
-{
-  "mcpServers": {
-    "qlik-sense-remote": {
-      "transport": "streamable-http",
-      "url": "https://your-mcp-host.example.com/mcp/",
-      "headers": {
-        "Authorization": "Bearer YOUR_MCP_AUTH_TOKEN"
-      }
-    }
-  }
-}
-```
-
-Quick local test (after `docker compose -f docker-compose.remote.yml up -d`):
-
-```json
-{
-  "mcpServers": {
-    "qlik-sense-remote": {
-      "transport": "streamable-http",
-      "url": "http://localhost:8080/mcp/",
-      "headers": {
-        "Authorization": "Bearer YOUR_MCP_AUTH_TOKEN"
-      }
-    }
-  }
-}
-```
-
-An example file is also available in `claude_desktop_remote.example.json`.
-
-Local URL notes:
-- macOS: `http://localhost:8080/mcp/` is correct when the gateway is published from Docker Desktop to the host
-- Linux: `http://localhost:8080/mcp/` is correct when the container is started with `-p 8080:8080`
-
-Notes:
-- Endpoint path is configurable with `MCP_GATEWAY_PATH` (default `/mcp`).
-- When calling manually with `curl`, use the slash-suffixed URL (`/mcp/`) to avoid `307` redirect.
-- Transport is MCP Streamable HTTP (supports GET/POST/DELETE).
-- Keep token/passphrase in external secret management where possible.
-- For production internet exposure, place this service behind TLS reverse proxy.
-
 ## Usage
 
 ### Start Server
+
+Choose one launch mode based on the client you are using.
+
+#### Local stdio mode
 
 ```bash
 # Using uvx (recommended)
@@ -567,11 +576,18 @@ qlik-sense-mcp-server
 # From source (development)
 python -m qlik_sense_mcp_server.server
 
-# Remote HTTP gateway (for external clients)
-qlik-sense-mcp-gateway
-
 # Using Docker
 docker run -i --rm --env-file .env -v "$(pwd)/certs:/certs:ro" qlik-sense-mcp-server
+```
+
+#### Remote HTTP gateway mode
+
+```bash
+# From installed package
+qlik-sense-mcp-gateway
+
+# Using Docker Compose
+docker compose -f docker-compose.remote.yml up --build -d
 ```
 
 ### Example Operations
@@ -908,7 +924,7 @@ Creates hypercube for data analysis.
 
 ### Project Structure
 ```
-qlik-sense-mcp/
+qlik-sense-mcp-d4p/
 ├── qlik_sense_mcp_server/
 │   ├── __init__.py
 │   ├── server.py          # Main MCP server
@@ -960,7 +976,7 @@ make help
 make build
 ```
 
-If `uv` is not available in the current shell, these Make targets automatically fall back to `python3`-based commands.
+If `uv` is not available in the current shell, these Make targets automatically create and use a local virtual environment, provided the selected Python interpreter is version 3.12 or newer.
 
 ### Version Management
 
@@ -1030,6 +1046,24 @@ ConnectionError: Failed to connect to Engine API
 - Check user exists in Qlik Sense
 - Verify user permissions
 
+#### Remote Gateway Authentication Errors
+```
+401 Unauthorized
+```
+**Solution:**
+- Verify `MCP_AUTH_TOKEN` or `MCP_AUTH_PASSPHRASE` is set before starting `qlik-sense-mcp-gateway`
+- Confirm the client sends `Authorization: Bearer <token>` or `X-MCP-Token: <token>`
+- When testing manually, call the slash-suffixed endpoint such as `/mcp/`
+
+#### Local Setup Errors
+```
+Python 3.12+ is required. Set PYTHON=python3.12 or use UV=<command>.
+```
+**Solution:**
+- Install Python 3.12 or newer
+- Run `make dev PYTHON=python3.12` if multiple Python versions are installed
+- On Linux, install the virtual environment support package if needed before rerunning `make dev`
+
 ### Diagnostics
 
 #### Test Configuration
@@ -1055,9 +1089,11 @@ print('Server initialized:', server.config_valid)
 
 ### Optimization Recommendations
 
-1. **Use filters** to limit data volume
-2. **Limit result size** with `max_rows` parameter
-3. **Use Repository API** for metadata (faster than Engine API)
+1. Start with small `limit`, `offset`, and `max_rows` values while validating a new workflow.
+2. Prefer Repository API-backed tools for metadata discovery before opening Engine API sessions.
+3. Query only the fields, variables, sheets, or objects required by the current analysis step.
+4. Use pagination for large app inventories instead of requesting the entire catalog in a single call.
+5. Reserve hypercube extraction for focused analytical queries, not broad exploratory dumps.
 
 ### Benchmarks
 
@@ -1077,11 +1113,11 @@ print('Server initialized:', server.config_valid)
 
 ### Recommendations
 
-1. **Store certificates securely** - exclude from git
-2. **Use environment variables** for sensitive data
-3. **Limit user permissions** in Qlik Sense
-4. **Update certificates regularly**
-5. **Monitor API access**
+1. Keep certificates, tokens, passphrases, and `.env` files out of Git and externalize them through secret management where possible.
+2. Use a dedicated Qlik service account with the minimum permissions required for the enabled MCP tools.
+3. Prefer the remote gateway only behind TLS termination and rotate `MCP_AUTH_TOKEN` or `MCP_AUTH_PASSPHRASE` regularly.
+4. Keep `QLIK_VERIFY_SSL=true` in production and disable verification only for temporary diagnostics in controlled environments.
+5. Monitor gateway access logs and Qlik API usage so failed authentication or abnormal query patterns are visible quickly.
 
 ### Access Control
 
