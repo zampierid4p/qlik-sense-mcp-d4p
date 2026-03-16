@@ -216,7 +216,7 @@ If you want to align to a specific release tag:
 
 ```bash
 git fetch --tags
-git checkout v1.4.4
+git checkout v1.4.5
 ```
 
 After updating the repository, refresh the local environment as needed:
@@ -565,7 +565,7 @@ docker login
 ```bash
 export DOCKERHUB_USER=your-dockerhub-user
 export IMAGE_NAME=qlik-sense-mcp-server
-export IMAGE_TAG=1.4.4
+export IMAGE_TAG=1.4.5
 export IMAGE_REF="$DOCKERHUB_USER/$IMAGE_NAME:$IMAGE_TAG"
 ```
 
@@ -1245,6 +1245,6 @@ SOFTWARE.
 
 ---
 
-**Project Status**: Production Ready | 10/10 Tools Working | v1.4.4
+**Project Status**: Production Ready | 10/10 Tools Working | v1.4.5
 
 **Installation**: `uvx qlik-sense-mcp-server`
