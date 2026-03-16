@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [1.4.4] - 2026-03-16
+
+### Added
+- Installation section extended with step-by-step Python 3.12 setup for macOS (Homebrew) and Linux (apt/dnf/deadsnakes PPA)
+- COMMANDS.md now includes a Python Environment section for quick reference
+
 ## [1.4.3] - 2026-03-16
 
 ### Changed
@@ -128,6 +134,7 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 - Updated `README.md` with API Reference for new tools and optional environment variables
 - Updated `mcp.json.example` autoApprove list to include new tools
 
+[1.4.4]: https://github.com/data4prime/qlik-sense-mcp-d4p/compare/v1.4.3...v1.4.4
 [1.4.3]: https://github.com/data4prime/qlik-sense-mcp-d4p/compare/v1.4.2...v1.4.3
 [1.4.2]: https://github.com/data4prime/qlik-sense-mcp-d4p/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/data4prime/qlik-sense-mcp-d4p/compare/v1.4.0...v1.4.1
