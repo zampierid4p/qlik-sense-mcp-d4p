@@ -270,7 +270,7 @@ class QlikSenseMCPServer:
             tools_list = [
                 Tool(
                     name="get_apps",
-                    description="Get list of Qlik Sense applications with essential fields and filters (name, stream, published) and pagination.",
+                    description="Get list of Qlik Sense applications with essential fields and filters (name, stream, published) and pagination. Use stream='My Work' to list personal unpublished apps.",
                     inputSchema={
                         "type": "object",
                         "properties": {
@@ -290,11 +290,11 @@ class QlikSenseMCPServer:
                             },
                             "stream": {
                                 "type": "string",
-                                "description": "Wildcard case-insensitive search in stream name"
+                                "description": "Wildcard case-insensitive search in stream name. Use 'My Work' to list personal unpublished apps."
                             },
                             "published": {
                                 "type": "string",
-                                "description": "Filter by published status (true/false or 1/0). Default: true",
+                                "description": "Filter by published status (true/false or 1/0). Default: true. Ignored when stream='My Work'.",
                                 "default": "true"
                             }
                         }

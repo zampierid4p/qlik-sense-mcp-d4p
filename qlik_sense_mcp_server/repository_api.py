@@ -115,6 +115,14 @@ class QlikRepositoryAPI:
         if offset is None or offset < 0:
             offset = 0
 
+        # "My Work" is a virtual Qlik Hub bucket for personal, unpublished apps.
+        # Unpublished apps have no stream in the Repository API, so a stream.name
+        # filter would return zero results.  We intercept the alias and translate
+        # it to published=False without any stream filter.
+        _my_work = bool(stream and stream.strip().lower() == "my work")
+        if _my_work:
+            published = False
+
         filters: List[str] = []
         if published is not None:
             filters.append(f"published eq {'true' if published else 'false'}")
@@ -122,7 +130,7 @@ class QlikRepositoryAPI:
             raw_name = name.replace('*', '')
             safe_name = raw_name.replace("'", "''")
             filters.append(f"name so '{safe_name}'")
-        if stream:
+        if stream and not _my_work:
             raw_stream = stream.replace('*', '')
             safe_stream = raw_stream.replace("'", "''")
             filters.append(f"stream.name so '{safe_stream}'")
@@ -148,7 +156,12 @@ class QlikRepositoryAPI:
         for app in apps:
             try:
                 is_published = bool(app.get("published", False))
-                stream_name = app.get("stream", {}).get("name", "") if is_published else ""
+                if _my_work and not is_published:
+                    stream_name = "My Work"
+                elif is_published:
+                    stream_name = app.get("stream", {}).get("name", "") or ""
+                else:
+                    stream_name = ""
                 minimal_apps.append({
                     "guid": app.get("id", ""),
                     "name": app.get("name", ""),

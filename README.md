@@ -43,7 +43,7 @@ Qlik Sense MCP Server bridges Qlik Sense Enterprise with systems supporting Mode
 
 | Tool | Description | API | Status |
 |------|-------------|-----|--------|
-| `get_apps` | Get comprehensive list of applications with metadata | Repository | ✅ |
+| `get_apps` | Get list of applications with metadata; use `stream='My Work'` for personal unpublished apps | Repository | ✅ |
 | `get_app_details` | Get detailed app info (`metainfo`, `fields`, `tables`) by app id or name | Repository | ✅ |
 | `get_app_sheets` | Get list of sheets from application with title and description | Engine | ✅ |
 | `get_app_sheet_objects` | Get list of objects from specific sheet with object ID, type and description | Engine | ✅ |
@@ -819,14 +819,19 @@ For n8n and similar clients calling `get_app_details`, these argument names are 
 
 #### Get Applications List
 ```python
-# Via MCP client - get first 50 apps (default)
+# Via MCP client - get first 25 apps (default, published only)
 result = mcp_client.call_tool("get_apps")
 print(f"Showing {result['pagination']['returned']} of {result['pagination']['total_found']} apps")
 
-# Search for specific apps
+# Search for specific apps by name
 result = mcp_client.call_tool("get_apps", {
     "name": "Sales",
     "limit": 10
+})
+
+# List personal unpublished apps (My Work)
+result = mcp_client.call_tool("get_apps", {
+    "stream": "My Work"
 })
 
 # Get more apps (pagination)
@@ -885,35 +890,31 @@ Retrieves a paginated list of Qlik Sense applications with wildcard filters for 
 - `limit` (optional): Maximum number of apps to return (default: 25, max: 50)
 - `offset` (optional): Number of apps to skip for pagination (default: 0)
 - `name` (optional): Wildcard case-insensitive search in application name
-- `stream` (optional): Wildcard case-insensitive search in stream name
-- `published` (optional): Filter by published status as `true` or `false` (default: `true`)
+- `stream` (optional): Wildcard case-insensitive search in stream name. Use `My Work` to list personal unpublished apps.
+- `published` (optional): Filter by published status as `true` or `false` (default: `true`). Ignored when `stream='My Work'`.
 
-**Returns:** Object containing paginated apps, streams, and pagination metadata
+**Returns:** Object with `apps` array and `pagination` metadata
 
 **Example (default - first 25 apps):**
 ```json
 {
-  "apps": [...],
-  "streams": [...],
+  "apps": [
+    {
+      "guid": "a1b2c3d4-...",
+      "name": "Sales Dashboard",
+      "description": "",
+      "stream": "Finance",
+      "modified_dttm": "2026-03-15T10:30:00Z",
+      "reload_dttm": "2026-03-15T09:00:00Z"
+    }
+  ],
   "pagination": {
     "limit": 25,
     "offset": 0,
     "returned": 25,
-    "total_found": 1598,
+    "total_found": 31,
     "has_more": true,
     "next_offset": 25
-  },
-  "filters": {
-    "name": null,
-    "stream": null,
-    "published": true
-  },
-  "summary": {
-    "total_apps": 1598,
-    "published_apps": 857,
-    "private_apps": 741,
-    "total_streams": 40,
-    "showing": "1-25 of 1598"
   }
 }
 ```
@@ -930,6 +931,11 @@ result = mcp_client.call_tool("get_apps", {
 result = mcp_client.call_tool("get_apps", {
     "stream": "Finance",
     "published": "true"
+})
+
+# List personal unpublished apps (My Work)
+result = mcp_client.call_tool("get_apps", {
+    "stream": "My Work"
 })
 
 # Get next page of results
