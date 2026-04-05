@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
+import logging
 import os
 import sys
 from contextlib import asynccontextmanager
@@ -18,19 +18,15 @@ from starlette.applications import Starlette
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 from . import __version__
+from .config import GatewayConfig, QlikSenseConfig
 from .server import QlikSenseMCPServer
 
-
-DEFAULT_GATEWAY_HOST = "0.0.0.0"
-DEFAULT_GATEWAY_PORT = 8080
-DEFAULT_MCP_PATH = "/mcp"
+logger = logging.getLogger(__name__)
 
 
 def _normalize_path(path: str) -> str:
     """Normalize endpoint path to a slash-prefixed route."""
-    if not path:
-        return DEFAULT_MCP_PATH
-    return path if path.startswith("/") else f"/{path}"
+    return GatewayConfig.model_fields["path"].default if not path else GatewayConfig(path=path, auth_token="placeholder").path
 
 
 def _get_auth_tokens_from_env() -> Set[str]:
@@ -95,17 +91,54 @@ class AuthenticatedMCPASGI:
         await self.manager.handle_request(scope, receive, send)
 
 
-def create_gateway_app() -> Starlette:
+def _build_startup_metadata(gateway_config: GatewayConfig, qlik_config: QlikSenseConfig) -> dict[str, object]:
+    """Build a safe readiness payload without leaking secrets."""
+    return {
+        "status": "ready",
+        "version": __version__,
+        "transport": "streamable-http",
+        "gateway": {
+            "host": gateway_config.host,
+            "port": gateway_config.port,
+            "public_port": gateway_config.public_port,
+            "path": gateway_config.path,
+            "auth_configured": True,
+        },
+        "qlik": {
+            "server_url": qlik_config.server_url,
+            "user_directory": qlik_config.user_directory,
+            "user_id": qlik_config.user_id,
+            "certificates": {
+                "client_cert": bool(qlik_config.client_cert_path),
+                "client_key": bool(qlik_config.client_key_path),
+                "ca_cert": bool(qlik_config.ca_cert_path),
+            },
+        },
+    }
+
+
+def _validate_startup(gateway_config: GatewayConfig) -> tuple[QlikSenseConfig, dict[str, object]]:
+    """Validate gateway and Qlik runtime dependencies before binding the socket."""
+    qlik_config = QlikSenseConfig.from_env()
+    qlik_config.validate_runtime()
+    startup_metadata = _build_startup_metadata(gateway_config, qlik_config)
+    logger.info(
+        "Validated remote gateway config host=%s port=%s public_port=%s path=%s auth_configured=%s",
+        gateway_config.host,
+        gateway_config.port,
+        gateway_config.public_port,
+        gateway_config.path,
+        True,
+    )
+    return qlik_config, startup_metadata
+
+
+def create_gateway_app(gateway_config: Optional[GatewayConfig] = None) -> Starlette:
     """Create Starlette app exposing MCP over Streamable HTTP with token auth."""
     load_dotenv()
 
-    mcp_path = _normalize_path(os.getenv("MCP_GATEWAY_PATH", DEFAULT_MCP_PATH))
-    valid_tokens = _get_auth_tokens_from_env()
-
-    if not valid_tokens:
-        raise ValueError(
-            "Remote gateway requires MCP_AUTH_TOKEN or MCP_AUTH_PASSPHRASE to be set"
-        )
+    gateway_config = gateway_config or GatewayConfig.from_env()
+    _qlik_config, startup_metadata = _validate_startup(gateway_config)
 
     qlik_server = QlikSenseMCPServer()
     session_manager = StreamableHTTPSessionManager(
@@ -114,7 +147,7 @@ def create_gateway_app() -> Starlette:
         stateless=False,
     )
 
-    auth_mcp_asgi = AuthenticatedMCPASGI(session_manager, valid_tokens)
+    auth_mcp_asgi = AuthenticatedMCPASGI(session_manager, gateway_config.auth_tokens)
 
     @asynccontextmanager
     async def lifespan(_app: Starlette):
@@ -124,10 +157,14 @@ def create_gateway_app() -> Starlette:
     async def healthz(_request: Request) -> Response:
         return JSONResponse({"status": "ok", "version": __version__, "transport": "streamable-http"})
 
+    async def readyz(_request: Request) -> Response:
+        return JSONResponse(startup_metadata)
+
     async def root(_request: Request) -> Response:
         return PlainTextResponse(
             "Qlik Sense MCP Remote Gateway\n"
-            f"MCP endpoint: {mcp_path}\n"
+            f"MCP endpoint: {gateway_config.path}\n"
+            "Readiness endpoint: /readyz\n"
             "Auth: Bearer token required\n"
         )
 
@@ -137,7 +174,8 @@ def create_gateway_app() -> Starlette:
         routes=[
             Route("/", endpoint=root, methods=["GET"]),
             Route("/healthz", endpoint=healthz, methods=["GET"]),
-            Mount(mcp_path, app=auth_mcp_asgi),
+            Route("/readyz", endpoint=readyz, methods=["GET"]),
+            Mount(gateway_config.path, app=auth_mcp_asgi),
         ],
     )
     return app
@@ -156,15 +194,19 @@ def main() -> None:
             sys.stderr.flush()
             return
 
-    host = os.getenv("MCP_GATEWAY_HOST", DEFAULT_GATEWAY_HOST)
-    port_raw = os.getenv("MCP_GATEWAY_PORT", str(DEFAULT_GATEWAY_PORT))
     try:
-        port = int(port_raw)
-    except ValueError as exc:
-        raise ValueError(f"Invalid MCP_GATEWAY_PORT value: {port_raw}") from exc
+        gateway_config = GatewayConfig.from_env()
+        app = create_gateway_app(gateway_config)
+    except Exception as exc:
+        logger.error("Gateway startup validation failed: %s", exc)
+        raise
 
-    app = create_gateway_app()
-    uvicorn.run(app, host=host, port=port, log_level=os.getenv("LOG_LEVEL", "info").lower())
+    uvicorn.run(
+        app,
+        host=gateway_config.host,
+        port=gateway_config.port,
+        log_level=gateway_config.log_level.lower(),
+    )
 
 
 def print_help() -> None:

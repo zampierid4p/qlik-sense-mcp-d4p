@@ -162,14 +162,19 @@ cython_debug/
 
 # Qlik Sense certificates and config
 certs/
+certs.zip
 *.pem
 *.key
 *.crt
 
-# Local configuration
+# Local configuration files (may contain real server URLs, usernames, tokens)
 .env.local
 config.local.py
+dot_env
 .DS_Store
+
+# IDE / editor local settings
+.vscode/
 
 
 .supercode

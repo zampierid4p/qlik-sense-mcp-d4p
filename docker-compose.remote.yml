@@ -1,6 +1,6 @@
 services:
   qlik-sense-mcp-remote:
-    image: qlik-sense-mcp-server:latest
+    image: ${DOCKER_IMAGE_REF:-qlik-sense-mcp-server:latest}
     build:
       context: .
       dockerfile: Dockerfile
@@ -10,14 +10,9 @@ services:
       - .env
 
     environment:
-      MCP_GATEWAY_HOST: "0.0.0.0"
-      MCP_GATEWAY_PORT: "8080"
+      MCP_GATEWAY_HOST: "${MCP_GATEWAY_HOST:-0.0.0.0}"
+      MCP_GATEWAY_PORT: "${MCP_GATEWAY_PORT:-8080}"
       MCP_GATEWAY_PATH: "${MCP_GATEWAY_PATH:-/mcp}"
-      # Set at least one of these in .env:
-      # MCP_AUTH_TOKEN=your-long-random-token
-      # MCP_AUTH_PASSPHRASE=your-passphrase
-      MCP_AUTH_TOKEN: "${MCP_AUTH_TOKEN:-}"
-      MCP_AUTH_PASSPHRASE: "${MCP_AUTH_PASSPHRASE:-}"
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
 
     volumes:
@@ -27,7 +22,20 @@ services:
         read_only: true
 
     ports:
-      - "${MCP_PUBLIC_PORT:-8080}:8080"
+      - "${MCP_PUBLIC_PORT:-8080}:${MCP_GATEWAY_PORT:-8080}"
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import os, urllib.request; port=os.getenv('MCP_GATEWAY_PORT', '8080'); urllib.request.urlopen(f'http://127.0.0.1:{port}/healthz', timeout=5).read()",
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
     read_only: true
     tmpfs:

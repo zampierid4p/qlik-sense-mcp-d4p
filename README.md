@@ -12,22 +12,26 @@ Model Context Protocol (MCP) server for integration with Qlik Sense Enterprise A
 - [Overview](#overview)
 - [Features](#features)
 - [Installation](#installation)
+- [Quick Start (Recommended Sequence)](#quick-start-recommended-sequence)
 - [Configuration](#configuration)
 - [Docker](#docker)
 - [Usage](#usage)
 - [API Reference](#api-reference)
 - [Architecture](#architecture)
 - [Development](#development)
+- [Performance](#performance)
+- [Security](#security)
 - [Troubleshooting](#troubleshooting)
 - [License](#license)
 
 ## Overview
 
-Qlik Sense MCP Server bridges Qlik Sense Enterprise with systems supporting Model Context Protocol. Server provides 10 comprehensive tools for complete Qlik Sense analytics workflow including application discovery, data analysis, script extraction, and metadata management.
+Qlik Sense MCP Server bridges Qlik Sense Enterprise with systems supporting Model Context Protocol. The project supports two runtime modes: stdio for local MCP clients that launch a command, and a remote Streamable HTTP gateway for clients that connect over HTTP.
 
 ### Key Features
 
 - **Unified API**: Single interface for Qlik Sense Repository and Engine APIs
+- **Two Transports**: Stdio mode for local clients and Streamable HTTP gateway for remote clients
 - **Security**: Certificate-based authentication support
 - **Performance**: Optimized queries and direct API access
 - **Analytics**: Advanced data analysis and hypercube creation
@@ -40,7 +44,7 @@ Qlik Sense MCP Server bridges Qlik Sense Enterprise with systems supporting Mode
 | Tool | Description | API | Status |
 |------|-------------|-----|--------|
 | `get_apps` | Get comprehensive list of applications with metadata | Repository | ✅ |
-| `get_app_details` | Get compact app overview (metadata, fields, master items, sheets/objects) | Repository | ✅ |
+| `get_app_details` | Get detailed app info (`metainfo`, `fields`, `tables`) by app id or name | Repository | ✅ |
 | `get_app_sheets` | Get list of sheets from application with title and description | Engine | ✅ |
 | `get_app_sheet_objects` | Get list of objects from specific sheet with object ID, type and description | Engine | ✅ |
 | `get_app_script` | Extract load script from application | Engine | ✅ |
@@ -234,7 +238,7 @@ If you want to align to a specific release tag:
 
 ```bash
 git fetch --tags
-git checkout v1.4.6
+git checkout v1.4.7
 ```
 
 After updating the repository, refresh the local environment as needed:
@@ -252,9 +256,85 @@ docker compose -f docker-compose.remote.yml up --build -d
 
 If your local branch contains uncommitted changes, commit or stash them before `git pull --rebase`.
 
+## Quick Start (Recommended Sequence)
+
+Use this sequence to avoid configuration drift and quickly verify both transports.
+
+### 1. Clone and prepare the environment
+
+```bash
+git clone https://github.com/data4prime/qlik-sense-mcp-d4p.git
+cd qlik-sense-mcp-d4p
+make dev
+```
+
+### 2. Create local runtime config
+
+```bash
+cp .env.example .env
+mkdir -p certs
+# copy client.pem, client_key.pem and root.pem into ./certs
+```
+
+Set these in `.env` before running:
+- `QLIK_SERVER_URL`
+- `QLIK_USER_DIRECTORY`
+- `QLIK_USER_ID`
+- `QLIK_CLIENT_CERT_PATH=/certs/client.pem`
+- `QLIK_CLIENT_KEY_PATH=/certs/client_key.pem`
+- `QLIK_CA_CERT_PATH=/certs/root.pem`
+- `MCP_AUTH_TOKEN` (required for remote gateway)
+
+### 3. Run tests (recommended)
+
+```bash
+make test
+```
+
+### 4. Start remote gateway (for n8n and HTTP MCP clients)
+
+```bash
+make remote-up
+```
+
+### 5. Validate health/readiness
+
+```bash
+curl -s http://localhost:8080/healthz
+curl -s http://localhost:8080/readyz
+```
+
+### 6. Run a minimal MCP handshake
+
+```bash
+TOKEN="replace-with-long-random-token"
+
+# initialize (capture mcp-session-id from response headers)
+curl -i -X POST http://localhost:8080/mcp/ \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"1"}}}'
+```
+
+Important for HTTP clients (including n8n):
+- endpoint must include trailing slash: `/mcp/`
+- `Accept` must include both `application/json` and `text/event-stream`
+- pass the `mcp-session-id` header on subsequent calls
+
+### 7. Optional: stdio mode for local command-launched clients
+
+```bash
+qlik-sense-mcp-server
+```
+
+Use stdio mode for local desktop clients that launch the process directly.
+
 ## Configuration
 
 Use this section after completing Installation. The runtime configuration is the same whether you start the server from Python, Docker, or Docker Compose; only the certificate paths change depending on where the process runs.
+
+The configuration is validated at startup. `QLIK_SERVER_URL` must be a valid `http://` or `https://` URL, the required Qlik identity fields cannot be empty, and any certificate file path that is set must point to an existing file.
 
 ### 1. Edit the `.env` File
 
@@ -375,15 +455,19 @@ Create `mcp.json` file for MCP client integration:
 
 The repository also includes `mcp.json.example` and `claude_desktop_remote.example.json` as starting points for local or remote client integrations.
 
+Use them as transport-specific templates:
+- `mcp.json.example` for stdio clients that launch the server as a command
+- `claude_desktop_remote.example.json` for clients that connect to the remote Streamable HTTP gateway
+
 ## Docker
 
 The repository includes a multi-stage `Dockerfile`, a `docker-compose.yml`, a `docker-compose.remote.yml`, and a `.dockerignore`.
 
 Choose the container mode that matches your client:
-- stdio mode for local MCP clients launched as a command, such as Claude Desktop or Cursor
-- remote HTTP gateway mode for external clients that connect over MCP Streamable HTTP
+- stdio mode via [docker-compose.yml](docker-compose.yml) or `docker run -i ...` for local MCP clients launched as a command, such as Claude Desktop or Cursor
+- remote HTTP gateway mode via [docker-compose.remote.yml](docker-compose.remote.yml) for external clients that connect over MCP Streamable HTTP
 
-The stdio container must always be started with an open stdin using `-i`.
+The stdio container must always be started with an open stdin using `-i`. The stdio compose file does not publish a host port. The remote compose file publishes `MCP_PUBLIC_PORT` on the host and keeps the internal listener on `MCP_GATEWAY_PORT`.
 
 ### Prerequisites
 
@@ -499,14 +583,30 @@ MCP_AUTH_PASSPHRASE=replace-with-strong-passphrase
 Start the gateway:
 
 ```bash
-docker compose -f docker-compose.remote.yml up --build -d
+make remote-up
 ```
+
+The default remote mapping is:
+- container listen host: `MCP_GATEWAY_HOST=0.0.0.0`
+- container listen port: `MCP_GATEWAY_PORT=8080`
+- published host port: `MCP_PUBLIC_PORT=8080`
+- MCP route: `MCP_GATEWAY_PATH=/mcp`
+
+If port `8080` is already in use locally, change `MCP_PUBLIC_PORT` in `.env` without changing the internal listener.
 
 Validate it:
 
 ```bash
 curl http://localhost:8080/healthz
+curl http://localhost:8080/readyz
+curl -i http://localhost:8080/mcp/
+curl -i -H "Authorization: Bearer YOUR_MCP_AUTH_TOKEN" -H "Accept: text/event-stream" http://localhost:8080/mcp/
+make remote-smoke
 ```
+
+The remote compose service now exposes an unauthenticated liveness endpoint at `/healthz` and a readiness payload at `/readyz`. Use `/healthz` for container health checks and `/readyz` to confirm the effective bind host, path, published port, and sanitized Qlik runtime metadata.
+
+For manual protocol checks, an unauthenticated request to `/mcp/` should return `401 Unauthorized`. An authenticated request with `Accept: text/event-stream` should reach the MCP layer and return `400 Bad Request` until a real session is established.
 
 Authentication headers accepted by the gateway:
 
@@ -562,6 +662,7 @@ Quick local test after `docker compose -f docker-compose.remote.yml up -d`:
 
 Notes:
 - endpoint path is configurable with `MCP_GATEWAY_PATH` and defaults to `/mcp`
+- `MCP_PUBLIC_PORT` controls the host port only; clients should connect to `http://localhost:$MCP_PUBLIC_PORT/...`
 - the gateway supports MCP Streamable HTTP with `GET`, `POST`, and `DELETE`
 - keep token or passphrase in external secret management where possible
 - place the gateway behind TLS reverse proxy before exposing it on the internet
@@ -583,7 +684,7 @@ docker login
 ```bash
 export DOCKERHUB_USER=your-dockerhub-user
 export IMAGE_NAME=qlik-sense-mcp-server
-export IMAGE_TAG=1.4.6
+export IMAGE_TAG=1.4.7
 export IMAGE_REF="$DOCKERHUB_USER/$IMAGE_NAME:$IMAGE_TAG"
 ```
 
@@ -630,15 +731,16 @@ docker run --rm -d \
 
 ```bash
 curl http://localhost:8080/healthz
+curl http://localhost:8080/readyz
 ```
 
-8. If you use Docker Compose and want to force private-registry image without local build:
+8. If you use Docker Compose and want to force a private-registry image without local build:
 
 ```bash
 DOCKER_IMAGE_REF="$IMAGE_REF" docker compose -f docker-compose.remote.yml up -d --no-build
 ```
 
-Then set in compose file `image: ${DOCKER_IMAGE_REF}` (replace static image value) or export the variable in your shell before startup.
+The compose files in this repository already honor `DOCKER_IMAGE_REF`, so exporting the variable is enough.
 
 ### Docker environment variables
 
@@ -698,8 +800,20 @@ docker run -i --rm --env-file .env -v "$(pwd)/certs:/certs:ro" qlik-sense-mcp-se
 qlik-sense-mcp-gateway
 
 # Using Docker Compose
-docker compose -f docker-compose.remote.yml up --build -d
+make remote-up
+
+# Tail logs while developing
+make remote-logs
+
+# Stop the gateway
+make remote-down
 ```
+
+For n8n and similar clients calling `get_app_details`, these argument names are accepted:
+- `app_id` (preferred)
+- `appId` (compatibility alias)
+- `name`
+- `appName` (compatibility alias)
 
 ### Example Operations
 
@@ -711,24 +825,28 @@ print(f"Showing {result['pagination']['returned']} of {result['pagination']['tot
 
 # Search for specific apps
 result = mcp_client.call_tool("get_apps", {
-    "name_filter": "Sales",
+    "name": "Sales",
     "limit": 10
 })
 
 # Get more apps (pagination)
 result = mcp_client.call_tool("get_apps", {
-    "offset": 50,
-    "limit": 50
+    "offset": 25,
+    "limit": 25
 })
 ```
 
 #### Analyze Application
 ```python
-# Get comprehensive app analysis
+# Get detailed app analysis
 result = mcp_client.call_tool("get_app_details", {
     "app_id": "your-app-id"
 })
-print(f"App has {len(result['data_model']['tables'])} tables")
+
+# Result structure: metainfo, fields, tables
+print(result["metainfo"]["name"])
+print(f"Fields: {len(result['fields'])}")
+print(f"Tables: {len(result['tables'])}")
 ```
 
 #### Create Data Analysis Hypercube
@@ -736,8 +854,14 @@ print(f"App has {len(result['data_model']['tables'])} tables")
 # Create hypercube for sales analysis
 result = mcp_client.call_tool("engine_create_hypercube", {
     "app_id": "your-app-id",
-    "dimensions": ["Region", "Product"],
-    "measures": ["Sum(Sales)", "Count(Orders)"],
+  "dimensions": [
+    {"field": "Region", "label": "Region"},
+    {"field": "Product", "label": "Product"}
+  ],
+  "measures": [
+    {"expression": "Sum(Sales)", "label": "Sales"},
+    {"expression": "Count(Orders)", "label": "Orders"}
+  ],
     "max_rows": 1000
 })
 ```
@@ -755,41 +879,41 @@ print(f"Average: {result['avg_value']['numeric']}")
 ## API Reference
 
 ### get_apps
-Retrieves comprehensive list of Qlik Sense applications with metadata, pagination and filtering support.
+Retrieves a paginated list of Qlik Sense applications with wildcard filters for name, stream, and published state.
 
 **Parameters:**
-- `limit` (optional): Maximum number of apps to return (default: 50, max: 1000)
+- `limit` (optional): Maximum number of apps to return (default: 25, max: 50)
 - `offset` (optional): Number of apps to skip for pagination (default: 0)
-- `name_filter` (optional): Filter apps by name (case-insensitive partial match)
-- `app_id_filter` (optional): Filter by specific app ID/GUID
-- `include_unpublished` (optional): Include unpublished apps (default: true)
+- `name` (optional): Wildcard case-insensitive search in application name
+- `stream` (optional): Wildcard case-insensitive search in stream name
+- `published` (optional): Filter by published status as `true` or `false` (default: `true`)
 
 **Returns:** Object containing paginated apps, streams, and pagination metadata
 
-**Example (default - first 50 apps):**
+**Example (default - first 25 apps):**
 ```json
 {
   "apps": [...],
   "streams": [...],
   "pagination": {
-    "limit": 50,
+    "limit": 25,
     "offset": 0,
-    "returned": 50,
+    "returned": 25,
     "total_found": 1598,
     "has_more": true,
-    "next_offset": 50
+    "next_offset": 25
   },
   "filters": {
-    "name_filter": null,
-    "app_id_filter": null,
-    "include_unpublished": true
+    "name": null,
+    "stream": null,
+    "published": true
   },
   "summary": {
     "total_apps": 1598,
     "published_apps": 857,
     "private_apps": 741,
     "total_streams": 40,
-    "showing": "1-50 of 1598"
+    "showing": "1-25 of 1598"
   }
 }
 ```
@@ -798,40 +922,53 @@ Retrieves comprehensive list of Qlik Sense applications with metadata, paginatio
 ```python
 # Search for apps containing "dashboard"
 result = mcp_client.call_tool("get_apps", {
-    "name_filter": "dashboard",
+    "name": "dashboard",
     "limit": 10
 })
 
-# Get specific app by ID
+# Filter published apps inside a stream
 result = mcp_client.call_tool("get_apps", {
-    "app_id_filter": "e2958865-2aed-4f8a-b3c7-20e6f21d275c"
+    "stream": "Finance",
+    "published": "true"
 })
 
 # Get next page of results
 result = mcp_client.call_tool("get_apps", {
-    "limit": 50,
-    "offset": 50
+    "limit": 25,
+    "offset": 25
 })
 ```
 
 ### get_app_details
-Gets comprehensive application analysis including data model, object counts, and metadata. Provides detailed field information, table structures, and application properties.
+Gets detailed application metadata and model structure. Returns metainfo plus full field and table lists.
 
 **Parameters:**
-- `app_id` (required): Application identifier
+- `app_id` (optional): Application identifier (preferred)
+- `name` (optional): Case-insensitive fuzzy search by app name
+- `appId` (optional): Alias for `app_id` used by some HTTP clients
+- `appName` (optional): Alias for `name` used by some HTTP clients
 
-**Returns:** Detailed application object with data model structure
+**Returns:** Object with `metainfo`, `fields`, and `tables`
+
+Provide at least one identifier (`app_id`/`appId`) or one name (`name`/`appName`).
 
 **Example:**
 ```json
 {
-  "app_metadata": {...},
-  "data_model": {
-    "tables": [...],
-    "total_tables": 2,
-    "total_fields": 45
+  "metainfo": {
+    "app_id": "cf54cdb0-1d32-4f02-a990-ee9c3e1cf77e",
+    "name": "Consumer Sales - IPA Application",
+    "description": "...",
+    "stream": "Everyone",
+    "modified_dttm": "2026-03-30T13:16:05.243Z",
+    "reload_dttm": "2023-01-23T21:39:19.658Z"
   },
-  "object_counts": {...}
+  "fields": [
+    {"name": "Product Group", "src_tables": ["ProductGroup"], "cardinal": 17}
+  ],
+  "tables": [
+    {"name": "ProductGroup", "no_of_rows": 17, "no_of_fields": 2}
+  ]
 }
 ```
 
@@ -1012,11 +1149,13 @@ Creates hypercube for data analysis.
 
 **Parameters:**
 - `app_id` (required): Application identifier
-- `dimensions` (required): Array of dimension fields
-- `measures` (required): Array of measure expressions
+- `dimensions` (optional): Array of dimension objects with `field`, optional `label`, and optional `sort_by`
+- `measures` (optional): Array of measure objects with `expression`, optional `label`, and optional `sort_by`
 - `max_rows` (optional): Maximum rows to return (default: 1000)
 
 **Returns:** Hypercube data with dimensions, measures, and total statistics
+
+If both `dimensions` and `measures` are omitted, the server applies its built-in defaults for exploratory analysis.
 
 **Example:**
 ```json
@@ -1072,6 +1211,9 @@ WebSocket client for Engine API operations including data extraction, analytics,
 #### QlikSenseConfig
 Configuration management class handling environment variables, certificate paths, and connection settings.
 
+#### GatewayConfig
+Remote gateway configuration model handling bind host, internal port, published port, path normalization, log level, and authentication requirements.
+
 ## Development
 
 ### Development Environment Setup
@@ -1088,6 +1230,24 @@ make build
 ```
 
 If `uv` is not available in the current shell, these Make targets automatically create and use a local virtual environment, provided the selected Python interpreter is version 3.12 or newer.
+
+### Local Remote Development Workflow
+
+```bash
+# Start the remote gateway with Docker Compose
+make remote-up
+
+# Inspect logs while iterating
+make remote-logs
+
+# Verify liveness, readiness, auth wall, and Streamable HTTP handshake
+make remote-smoke
+
+# Stop the remote gateway
+make remote-down
+```
+
+Use this workflow when you need to validate the real host-to-container networking path, token enforcement, and MCP remote endpoint behavior locally.
 
 ### Version Management
 
@@ -1163,6 +1323,7 @@ ConnectionError: Failed to connect to Engine API
 ```
 **Solution:**
 - Verify `MCP_AUTH_TOKEN` or `MCP_AUTH_PASSPHRASE` is set before starting `qlik-sense-mcp-gateway`
+- Do not redefine `MCP_AUTH_TOKEN` or `MCP_AUTH_PASSPHRASE` with empty Docker Compose overrides
 - Confirm the client sends `Authorization: Bearer <token>` or `X-MCP-Token: <token>`
 - When testing manually, call the slash-suffixed endpoint such as `/mcp/`
 
@@ -1263,6 +1424,6 @@ SOFTWARE.
 
 ---
 
-**Project Status**: Production Ready | 10/10 Tools Working | v1.4.6
+**Current Version**: v1.4.7
 
-**Installation**: `uvx qlik-sense-mcp-server`
+**Primary Entry Points**: `qlik-sense-mcp-server` for stdio, `qlik-sense-mcp-gateway` for remote Streamable HTTP

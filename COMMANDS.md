@@ -1,5 +1,34 @@
 # Quick Commands Reference
 
+## Recommended Sequence (Install + Run)
+
+```bash
+# 1) Clone and prepare environment
+git clone https://github.com/data4prime/qlik-sense-mcp-d4p.git
+cd qlik-sense-mcp-d4p
+make dev
+
+# 2) Create runtime config and certificates
+cp .env.example .env
+mkdir -p certs
+# copy client.pem, client_key.pem, root.pem into ./certs
+
+# 3) Run tests (recommended)
+make test
+
+# 4) Start remote gateway (n8n / HTTP MCP clients)
+make remote-up
+
+# 5) Validate liveness/readiness
+curl -s http://localhost:8080/healthz
+curl -s http://localhost:8080/readyz
+```
+
+Important for HTTP clients (including n8n):
+- Use endpoint with trailing slash: `/mcp/`
+- Send `Accept: application/json, text/event-stream`
+- Reuse `mcp-session-id` from initialize response headers on subsequent calls
+
 ## Local Installation
 
 ```bash
@@ -98,12 +127,41 @@ docker build -t qlik-sense-mcp-server .
 # Run stdio container
 docker run -i --rm --env-file .env -v "$(pwd)/certs:/certs:ro" qlik-sense-mcp-server
 
-# Start remote HTTP gateway
-docker compose -f docker-compose.remote.yml up --build -d
+# Start remote HTTP gateway from docker-compose.remote.yml
+make remote-up
 
-# Check gateway health
+# Check gateway liveness
 curl http://localhost:8080/healthz
+
+# Check gateway readiness
+curl http://localhost:8080/readyz
+
+# Verify remote auth and Streamable HTTP handshake contract
+curl -i http://localhost:8080/mcp/
+curl -i -H "Authorization: Bearer YOUR_MCP_AUTH_TOKEN" -H "Accept: text/event-stream" http://localhost:8080/mcp/
+
+# Minimal initialize probe (captures mcp-session-id)
+TOKEN="replace-with-long-random-token"
+curl -i -X POST http://localhost:8080/mcp/ \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"1"}}}'
+
+# Run the full local smoke test against the remote endpoint
+make remote-smoke
+
+# Follow remote gateway logs during development
+make remote-logs
+
+# Stop the remote gateway
+make remote-down
 ```
+
+Notes:
+- `docker-compose.yml` is for stdio transport and does not publish a host port
+- `docker-compose.remote.yml` is for Streamable HTTP transport and publishes `MCP_PUBLIC_PORT`
+- If `8080` is already busy locally, set `MCP_PUBLIC_PORT` in `.env` and restart with `make remote-up`
 
 ## Testing and Build
 
@@ -136,7 +194,7 @@ DOCKERHUB=datasynapsi make docker-push-latest
 
 Optional overrides:
 - `DOCKER_IMAGE_NAME=qlik-sense-mcp-server`
-- `DOCKER_IMAGE_TAG=1.4.6`
+- `DOCKER_IMAGE_TAG=1.4.7`
 - `DOCKER='sudo docker'` on Linux if needed
 
 ## Git Update Workflow
@@ -152,7 +210,7 @@ git fetch --all --tags
 git pull --rebase
 
 # Move to a specific release tag
-git checkout v1.4.6
+git checkout v1.4.7
 ```
 
 After updating code, refresh local dependencies and images as needed:
@@ -160,7 +218,7 @@ After updating code, refresh local dependencies and images as needed:
 ```bash
 make dev
 make docker-build
-docker compose -f docker-compose.remote.yml up --build -d
+make remote-up
 ```
 
 ## Dangerous Maintenance

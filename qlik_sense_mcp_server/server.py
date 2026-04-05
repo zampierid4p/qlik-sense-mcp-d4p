@@ -1,7 +1,6 @@
 """Main MCP Server for Qlik Sense APIs."""
 
 import asyncio
-import errno
 import json
 import ssl
 import sys
@@ -22,6 +21,7 @@ from .config import (
     DEFAULT_FIELD_FETCH_SIZE,
     MAX_FIELD_FETCH_SIZE,
     DEFAULT_TICKET_TIMEOUT,
+    validate_cert_file_paths,
 )
 from .repository_api import QlikRepositoryAPI
 from .engine_api import QlikEngineAPI
@@ -111,21 +111,11 @@ class QlikSenseMCPServer:
 
     def _validate_cert_paths(self) -> None:
         """Validate certificate file paths when provided in configuration."""
-        cert_fields = [
-            ("QLIK_CLIENT_CERT_PATH", self.config.client_cert_path),
-            ("QLIK_CLIENT_KEY_PATH", self.config.client_key_path),
-            ("QLIK_CA_CERT_PATH", self.config.ca_cert_path),
-        ]
-
-        for env_name, path in cert_fields:
-            if not path:
-                continue
-            if not os.path.isfile(path):
-                raise FileNotFoundError(
-                    errno.ENOENT,
-                    f"{env_name} points to a missing file",
-                    path,
-                )
+        validate_cert_file_paths(
+            self.config.client_cert_path,
+            self.config.client_key_path,
+            self.config.ca_cert_path,
+        )
 
     def _create_httpx_client(self) -> httpx.Client:
         """Create an httpx client configured with Qlik certificates."""
@@ -312,17 +302,15 @@ class QlikSenseMCPServer:
                 ),
                 Tool(
                     name="get_app_details",
-                    description="Get compact application info with filters by guid or name (case-insensitive). Returns metainfo, tables/fields list, master items, sheets and objects with used fields.",
+                    description="Get detailed application info by guid or name (case-insensitive). Returns metainfo, fields and tables.",
                     inputSchema={
                         "type": "object",
                         "properties": {
                             "app_id": {"type": "string", "description": "Application GUID (preferred if known)"},
-                            "name": {"type": "string", "description": "Case-insensitive fuzzy search by app name"}
-                        },
-                        "oneOf": [
-                            {"required": ["app_id"]},
-                            {"required": ["name"]}
-                        ]
+                            "name": {"type": "string", "description": "Case-insensitive fuzzy search by app name"},
+                            "appId": {"type": "string", "description": "Compatibility alias for app_id used by some clients"},
+                            "appName": {"type": "string", "description": "Compatibility alias for name used by some clients"}
+                        }
                     }
                 ),
 
@@ -520,8 +508,9 @@ class QlikSenseMCPServer:
                     ]
 
                 elif name == "get_app_details":
-                    req_app_id = arguments.get("app_id")
-                    req_name = arguments.get("name")
+                    # Compatibility aliases for clients that rename snake_case fields.
+                    req_app_id = arguments.get("app_id") or arguments.get("appId") or arguments.get("id")
+                    req_name = arguments.get("name") or arguments.get("appName")
 
                     def _resolve_app() -> Dict[str, Any]:
                         """Resolve application by ID or name from Repository API."""
@@ -561,13 +550,34 @@ class QlikSenseMCPServer:
 
                             app_id = resolved.get("app_id")
 
-                            ticket = self._get_qlik_ticket()
-                            if not ticket:
-                                return _make_error("Failed to obtain Qlik ticket")
+                            metadata = None
+                            proxy_error = None
 
-                            metadata = self._get_app_metadata_via_proxy(app_id, ticket)
-                            if "error" in metadata:
-                                return metadata
+                            ticket = self._get_qlik_ticket()
+                            if ticket:
+                                metadata = self._get_app_metadata_via_proxy(app_id, ticket)
+                                if "error" in metadata:
+                                    proxy_error = metadata["error"]
+                                    logger.warning(
+                                        "Proxy metadata lookup failed for app %s, falling back to Engine API: %s",
+                                        app_id,
+                                        proxy_error,
+                                    )
+                                    metadata = None
+                            else:
+                                proxy_error = "Failed to obtain Qlik ticket"
+                                logger.warning(
+                                    "Qlik ticket unavailable for app %s, falling back to Engine API",
+                                    app_id,
+                                )
+
+                            if metadata is None:
+                                if not self.engine_api:
+                                    return _make_error(proxy_error or "Failed to initialize Engine API")
+
+                                metadata = self.engine_api.get_detailed_app_metadata(app_id)
+                                if "error" in metadata:
+                                    return metadata
 
                             result = {
                                 "metainfo": {

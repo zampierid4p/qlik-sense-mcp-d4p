@@ -10,11 +10,9 @@
 # Il client MCP (es. Claude Desktop) lancerà il container con:
 #   docker run -i --env-file .env -v ./certs:/certs qlik-sense-mcp-server
 
-version: "3.9"
-
 services:
   qlik-sense-mcp:
-    image: qlik-sense-mcp-server:latest
+    image: ${DOCKER_IMAGE_REF:-qlik-sense-mcp-server:latest}
     build:
       context: .
       dockerfile: Dockerfile

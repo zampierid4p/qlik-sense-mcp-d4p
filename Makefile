@@ -11,7 +11,7 @@ PYTHON ?= $(shell \
 VENV_DIR ?= .venv
 DOCKER ?= docker
 
-.PHONY: help install dev clean build test version-patch version-minor version-major publish create-pr git-clean docker-build docker-push docker-push-latest bootstrap-pip
+.PHONY: help install dev clean build test test-live version-patch version-minor version-major publish create-pr git-clean docker-build docker-push docker-push-latest bootstrap-pip remote-up remote-down remote-logs remote-smoke
 
 # Default target
 help:
@@ -21,11 +21,16 @@ help:
 	@echo "  clean          - Clean build artifacts"
 	@echo "  build          - Build package for distribution"
 	@echo "  test           - Run tests"
+	@echo "  test-live      - Run live MCP integration tests using .env"
 	@echo "  version-patch  - Bump patch version and create PR"
 	@echo "  version-minor  - Bump minor version and create PR"
 	@echo "  version-major  - Bump major version and create PR"
 	@echo "  publish        - Publish to PyPI (automated via GitHub Actions)"
 	@echo "  docker-build   - Build Docker image locally"
+	@echo "  remote-up      - Start remote HTTP gateway locally with Docker Compose"
+	@echo "  remote-down    - Stop remote HTTP gateway locally"
+	@echo "  remote-logs    - Tail remote HTTP gateway logs"
+	@echo "  remote-smoke   - Verify remote HTTP gateway liveness/readiness and auth"
 	@echo "  docker-push    - Build and push Docker image to Docker Hub"
 	@echo "  docker-push-latest - Push Docker image with version and latest tags"
 	@echo "  bootstrap-pip  - Ensure pip is available for the selected Python interpreter"
@@ -116,6 +121,14 @@ test:
 		$(VENV_DIR)/bin/python -m pytest tests/ -v; \
 	fi
 
+test-live:
+	@if $(UV) --version >/dev/null 2>&1; then \
+		RUN_QLIK_LIVE_TESTS=1 $(UV) run pytest tests/test_live_mcp_tools.py -v -s; \
+	else \
+		$(MAKE) bootstrap-venv PYTHON='$(PYTHON)' VENV_DIR='$(VENV_DIR)'; \
+		RUN_QLIK_LIVE_TESTS=1 $(VENV_DIR)/bin/python -m pytest tests/test_live_mcp_tools.py -v -s; \
+	fi
+
 # Version bumping with PR creation
 version-patch:
 	@echo "Bumping patch version..."
@@ -169,6 +182,35 @@ docker-build:
 	TAG=$${DOCKER_IMAGE_TAG:-$$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')}; \
 	echo "Building $$IMAGE_NAME:$$TAG"; \
 	$(DOCKER) build -t "$$IMAGE_NAME:$$TAG" .
+
+remote-up:
+	@$(DOCKER) compose -f $(PWD)/docker-compose.remote.yml up -d --build
+
+remote-down:
+	@$(DOCKER) compose -f $(PWD)/docker-compose.remote.yml down
+
+remote-logs:
+	@$(DOCKER) compose -f $(PWD)/docker-compose.remote.yml logs -f qlik-sense-mcp-remote
+
+remote-smoke:
+	@set -a; \
+	if [ -f $(PWD)/.env ]; then . $(PWD)/.env; fi; \
+	set +a; \
+	PORT=$${MCP_PUBLIC_PORT:-8080}; \
+	PATH_SUFFIX=$${MCP_GATEWAY_PATH:-/mcp}; \
+	TOKEN=$${MCP_AUTH_TOKEN:-$${MCP_AUTH_PASSPHRASE:-}}; \
+	if [ -z "$$TOKEN" ]; then echo "Set MCP_AUTH_TOKEN or MCP_AUTH_PASSPHRASE before running remote-smoke"; exit 1; fi; \
+	echo "Checking liveness on http://localhost:$$PORT/healthz"; \
+	curl --fail --silent http://localhost:$$PORT/healthz >/dev/null || exit 1; \
+	echo "Checking readiness on http://localhost:$$PORT/readyz"; \
+	curl --fail --silent http://localhost:$$PORT/readyz >/dev/null || exit 1; \
+	echo "Checking unauthenticated MCP access on http://localhost:$$PORT$$PATH_SUFFIX/"; \
+	UNAUTH_CODE=$$(curl --silent --output /dev/null --write-out '%{http_code}' http://localhost:$$PORT$$PATH_SUFFIX/); \
+	if [ "$$UNAUTH_CODE" != "401" ]; then echo "Expected 401 from unauthenticated MCP probe, got $$UNAUTH_CODE"; exit 1; fi; \
+	echo "Checking authenticated Streamable HTTP contract on http://localhost:$$PORT$$PATH_SUFFIX/"; \
+	AUTH_CODE=$$(curl --silent --output /dev/null --write-out '%{http_code}' -H "Authorization: Bearer $$TOKEN" -H "Accept: text/event-stream" http://localhost:$$PORT$$PATH_SUFFIX/); \
+	if [ "$$AUTH_CODE" != "400" ]; then echo "Expected 400 from authenticated MCP protocol probe, got $$AUTH_CODE"; exit 1; fi; \
+	echo "Remote gateway smoke test passed"
 
 # Docker Hub push (single tag)
 docker-push: docker-build

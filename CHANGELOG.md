@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [Unreleased]
+
+## [1.4.7] - 2026-04-05
+
+### Added
+- Docker healthcheck for the remote Streamable HTTP gateway and local Make targets for `remote-up`, `remote-down`, `remote-logs`, and `remote-smoke`
+- Readiness endpoint `/readyz` for the remote gateway and HTTP-level tests covering auth, path normalization, and Streamable HTTP probing
+
+### Changed
+- Remote gateway startup now validates auth, Qlik connection settings, certificate paths, bind host/port, and normalized MCP route before binding the socket
+- Docker Compose files now support `DOCKER_IMAGE_REF` overrides and use transport-specific behavior: stdio compose without host port publishing, remote compose with published `MCP_PUBLIC_PORT`
+- README, quick commands, and example MCP client configs were fully realigned with the current stdio and remote gateway behavior
+
+### Fixed
+- Removed unsafe remote compose overrides that could clear `MCP_AUTH_TOKEN` or `MCP_AUTH_PASSPHRASE` loaded from `.env`
+- Removed obsolete Compose `version` metadata from the stdio compose file to avoid Docker warnings
+
 ## [1.4.6] - 2026-03-16
 
 ### Changed
@@ -145,6 +162,8 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 - Updated `README.md` with API Reference for new tools and optional environment variables
 - Updated `mcp.json.example` autoApprove list to include new tools
 
+[Unreleased]: https://github.com/data4prime/qlik-sense-mcp-d4p/compare/v1.4.7...HEAD
+[1.4.7]: https://github.com/data4prime/qlik-sense-mcp-d4p/compare/v1.4.6...v1.4.7
 [1.4.6]: https://github.com/data4prime/qlik-sense-mcp-d4p/compare/v1.4.5...v1.4.6
 [1.4.5]: https://github.com/data4prime/qlik-sense-mcp-d4p/compare/v1.4.4...v1.4.5
 [1.4.4]: https://github.com/data4prime/qlik-sense-mcp-d4p/compare/v1.4.3...v1.4.4

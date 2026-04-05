@@ -1,7 +1,9 @@
 """Tests for server module."""
 
+import json
 import pytest
 from unittest.mock import patch, MagicMock
+from mcp.types import CallToolRequest
 from qlik_sense_mcp_server.server import _make_error, QlikSenseMCPServer
 from qlik_sense_mcp_server import __version__
 
@@ -29,8 +31,8 @@ class TestVersion:
         for part in parts:
             assert part.isdigit()
 
-    def test_version_is_1_4_4(self):
-        assert __version__ == "1.4.6"
+    def test_version_is_1_4_7(self):
+        assert __version__ == "1.4.7"
 
 
 class TestQlikSenseMCPServer:
@@ -74,3 +76,76 @@ class TestQlikSenseMCPServer:
     def test_server_has_server_instance(self):
         server = QlikSenseMCPServer()
         assert server.server is not None
+
+    @pytest.mark.asyncio
+    @patch.dict("os.environ", {
+        "QLIK_SERVER_URL": "https://qlik.example.com",
+        "QLIK_USER_DIRECTORY": "DOMAIN",
+        "QLIK_USER_ID": "admin",
+        "QLIK_VERIFY_SSL": "false",
+        "QLIK_CLIENT_CERT_PATH": "",
+        "QLIK_CLIENT_KEY_PATH": "",
+        "QLIK_CA_CERT_PATH": "",
+    }, clear=False)
+    async def test_get_app_details_falls_back_to_engine_api_when_ticket_is_unavailable(self):
+        server = QlikSenseMCPServer()
+        server.repository_api.get_app_by_id = MagicMock(return_value={
+            "id": "app-123",
+            "name": "Demo App",
+            "description": "demo",
+            "published": True,
+            "stream": {"name": "Everyone"},
+            "modifiedDate": "2026-04-05T00:00:00Z",
+            "lastReloadTime": "2026-04-05T00:00:00Z",
+        })
+        server._get_qlik_ticket = MagicMock(return_value=None)
+        server._get_app_metadata_via_proxy = MagicMock()
+        server.engine_api.get_detailed_app_metadata = MagicMock(return_value={
+            "fields": [{"name": "Customer"}],
+            "tables": [{"name": "Facts"}],
+        })
+
+        handler = server.server.request_handlers[CallToolRequest]
+        result = await handler(CallToolRequest(params={"name": "get_app_details", "arguments": {"app_id": "app-123"}}))
+        payload = json.loads(result.root.content[0].text)
+
+        assert payload["metainfo"]["app_id"] == "app-123"
+        assert payload["fields"] == [{"name": "Customer"}]
+        assert payload["tables"] == [{"name": "Facts"}]
+        server._get_app_metadata_via_proxy.assert_not_called()
+        server.engine_api.get_detailed_app_metadata.assert_called_once_with("app-123")
+
+    @pytest.mark.asyncio
+    @patch.dict("os.environ", {
+        "QLIK_SERVER_URL": "https://qlik.example.com",
+        "QLIK_USER_DIRECTORY": "DOMAIN",
+        "QLIK_USER_ID": "admin",
+        "QLIK_VERIFY_SSL": "false",
+        "QLIK_CLIENT_CERT_PATH": "",
+        "QLIK_CLIENT_KEY_PATH": "",
+        "QLIK_CA_CERT_PATH": "",
+    }, clear=False)
+    async def test_get_app_details_accepts_appid_alias(self):
+        server = QlikSenseMCPServer()
+        server.repository_api.get_app_by_id = MagicMock(return_value={
+            "id": "app-123",
+            "name": "Demo App",
+            "description": "demo",
+            "published": True,
+            "stream": {"name": "Everyone"},
+            "modifiedDate": "2026-04-05T00:00:00Z",
+            "lastReloadTime": "2026-04-05T00:00:00Z",
+        })
+        server._get_qlik_ticket = MagicMock(return_value=None)
+        server._get_app_metadata_via_proxy = MagicMock()
+        server.engine_api.get_detailed_app_metadata = MagicMock(return_value={
+            "fields": [{"name": "Customer"}],
+            "tables": [{"name": "Facts"}],
+        })
+
+        handler = server.server.request_handlers[CallToolRequest]
+        result = await handler(CallToolRequest(params={"name": "get_app_details", "arguments": {"appId": "app-123"}}))
+        payload = json.loads(result.root.content[0].text)
+
+        assert payload["metainfo"]["app_id"] == "app-123"
+        server.repository_api.get_app_by_id.assert_called_once_with("app-123")

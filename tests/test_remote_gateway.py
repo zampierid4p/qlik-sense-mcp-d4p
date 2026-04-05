@@ -1,14 +1,18 @@
 """Tests for remote gateway helpers."""
 
+from contextlib import asynccontextmanager
 from unittest.mock import patch
 
+from starlette.responses import JSONResponse
 from starlette.requests import Request
+from starlette.testclient import TestClient
 
 from qlik_sense_mcp_server.remote_gateway import (
     _extract_token,
     _get_auth_tokens_from_env,
     _is_authorized,
     _normalize_path,
+    create_gateway_app,
 )
 
 
@@ -42,6 +46,9 @@ class TestPathNormalization:
     def test_path_with_prefix_is_kept(self):
         assert _normalize_path("/gateway") == "/gateway"
 
+    def test_path_collapses_duplicate_slashes(self):
+        assert _normalize_path("//gateway//nested//") == "/gateway/nested"
+
 
 class TestTokenConfig:
     @patch.dict("os.environ", {"MCP_AUTH_TOKEN": "token123", "MCP_AUTH_PASSPHRASE": "phrase456"}, clear=False)
@@ -67,3 +74,85 @@ class TestAuthExtraction:
     def test_is_authorized_false_when_missing(self):
         req = _make_request({})
         assert _is_authorized(req, {"allow-me"}) is False
+
+
+class _FakeQlikServer:
+    def __init__(self):
+        self.server = object()
+
+
+class _FakeSessionManager:
+    def __init__(self, app, json_response, stateless):
+        self.app = app
+        self.json_response = json_response
+        self.stateless = stateless
+
+    @asynccontextmanager
+    async def run(self):
+        yield
+
+    async def handle_request(self, scope, receive, send):
+        response = JSONResponse({"handled": True, "path": scope.get("path")})
+        await response(scope, receive, send)
+
+
+def _make_client(monkeypatch, extra_env: dict[str, str] | None = None) -> TestClient:
+    env = {
+        "MCP_AUTH_TOKEN": "token123",
+        "QLIK_SERVER_URL": "https://qlik.example.com",
+        "QLIK_USER_DIRECTORY": "DOMAIN",
+        "QLIK_USER_ID": "admin",
+    }
+    if extra_env:
+        env.update(extra_env)
+
+    monkeypatch.setattr("qlik_sense_mcp_server.remote_gateway.load_dotenv", lambda: None)
+    monkeypatch.setattr("qlik_sense_mcp_server.remote_gateway.QlikSenseMCPServer", _FakeQlikServer)
+    monkeypatch.setattr(
+        "qlik_sense_mcp_server.remote_gateway.StreamableHTTPSessionManager",
+        _FakeSessionManager,
+    )
+
+    with patch.dict("os.environ", env, clear=True):
+        app = create_gateway_app()
+    return TestClient(app)
+
+
+class TestGatewayHttp:
+    def test_root_health_and_readiness(self, monkeypatch):
+        client = _make_client(monkeypatch)
+
+        root_response = client.get("/")
+        assert root_response.status_code == 200
+        assert "MCP endpoint: /mcp" in root_response.text
+        assert "Readiness endpoint: /readyz" in root_response.text
+
+        health_response = client.get("/healthz")
+        assert health_response.status_code == 200
+        assert health_response.json()["status"] == "ok"
+
+        ready_response = client.get("/readyz")
+        assert ready_response.status_code == 200
+        payload = ready_response.json()
+        assert payload["status"] == "ready"
+        assert payload["gateway"]["path"] == "/mcp"
+        assert payload["gateway"]["auth_configured"] is True
+
+    def test_mcp_requires_authentication(self, monkeypatch):
+        client = _make_client(monkeypatch)
+        response = client.get("/mcp/")
+        assert response.status_code == 401
+        assert response.json()["error"] == "unauthorized"
+
+    def test_mcp_accepts_bearer_token(self, monkeypatch):
+        client = _make_client(monkeypatch)
+        response = client.get("/mcp/", headers={"Authorization": "Bearer token123"})
+        assert response.status_code == 200
+        assert response.json()["handled"] is True
+
+    def test_custom_path_is_normalized(self, monkeypatch):
+        client = _make_client(monkeypatch, {"MCP_GATEWAY_PATH": "//custom//mcp//"})
+        response = client.get("/custom/mcp/", headers={"X-MCP-Token": "token123"})
+        assert response.status_code == 200
+        ready_response = client.get("/readyz")
+        assert ready_response.json()["gateway"]["path"] == "/custom/mcp"
