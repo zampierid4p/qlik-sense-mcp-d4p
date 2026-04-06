@@ -13,6 +13,11 @@ cp .env.example .env
 mkdir -p certs
 # copy client.pem, client_key.pem, root.pem into ./certs
 
+# Configure remote auth mode in .env
+# MCP_AUTH_MODE=token|jwt|both
+# token mode: MCP_AUTH_TOKEN (or MCP_AUTH_PASSPHRASE)
+# jwt mode: MCP_JWT_SECRET (+ optional MCP_JWT_AUDIENCE, MCP_JWT_ISSUER)
+
 # 3) Run tests (recommended)
 make test
 
@@ -141,12 +146,14 @@ curl -i http://localhost:8080/mcp/
 curl -i -H "Authorization: Bearer YOUR_MCP_AUTH_TOKEN" -H "Accept: text/event-stream" http://localhost:8080/mcp/
 
 # Minimal initialize probe (captures mcp-session-id)
-TOKEN="replace-with-long-random-token"
+AUTH_HEADER="Bearer replace-with-long-random-token"
 curl -i -X POST http://localhost:8080/mcp/ \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
-  -H "Authorization: Bearer $TOKEN" \
+  -H "Authorization: $AUTH_HEADER" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"1"}}}'
+
+# If using JWT mode, set AUTH_HEADER to: Bearer <signed-jwt>
 
 # Run the full local smoke test against the remote endpoint
 make remote-smoke
@@ -162,6 +169,11 @@ Notes:
 - `docker-compose.yml` is for stdio transport and does not publish a host port
 - `docker-compose.remote.yml` is for Streamable HTTP transport and publishes `MCP_PUBLIC_PORT`
 - If `8080` is already busy locally, set `MCP_PUBLIC_PORT` in `.env` and restart with `make remote-up`
+
+Remote auth modes (`MCP_AUTH_MODE`):
+- `token` (default): static token via `MCP_AUTH_TOKEN` or `MCP_AUTH_PASSPHRASE`
+- `jwt`: JWT HS256 via `MCP_JWT_SECRET` (optional checks: `MCP_JWT_AUDIENCE`, `MCP_JWT_ISSUER`)
+- `both`: accepts both static token and JWT
 
 ## Testing and Build
 

@@ -283,7 +283,10 @@ Set these in `.env` before running:
 - `QLIK_CLIENT_CERT_PATH=/certs/client.pem`
 - `QLIK_CLIENT_KEY_PATH=/certs/client_key.pem`
 - `QLIK_CA_CERT_PATH=/certs/root.pem`
-- `MCP_AUTH_TOKEN` (required for remote gateway)
+- `MCP_AUTH_MODE` (`token`, `jwt`, or `both`)
+- If `MCP_AUTH_MODE=token`: set `MCP_AUTH_TOKEN` (or `MCP_AUTH_PASSPHRASE`)
+- If `MCP_AUTH_MODE=jwt`: set `MCP_JWT_SECRET` (optionally `MCP_JWT_AUDIENCE`, `MCP_JWT_ISSUER`)
+- If `MCP_AUTH_MODE=both`: set both token and JWT settings
 
 ### 3. Run tests (recommended)
 
@@ -307,15 +310,17 @@ curl -s http://localhost:8080/readyz
 ### 6. Run a minimal MCP handshake
 
 ```bash
-TOKEN="replace-with-long-random-token"
+AUTH_HEADER="Bearer replace-with-long-random-token"
 
 # initialize (capture mcp-session-id from response headers)
 curl -i -X POST http://localhost:8080/mcp/ \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
-  -H "Authorization: Bearer $TOKEN" \
+  -H "Authorization: $AUTH_HEADER" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"1"}}}'
 ```
+
+For `MCP_AUTH_MODE=jwt` or `MCP_AUTH_MODE=both`, set `AUTH_HEADER` to a valid JWT, for example `Bearer <signed-jwt>`.
 
 Important for HTTP clients (including n8n):
 - endpoint must include trailing slash: `/mcp/`
@@ -386,12 +391,49 @@ QLIK_WS_TIMEOUT=8.0     # seconds
 QLIK_WS_RETRIES=2       # number of endpoints to try
 
 # Remote gateway settings (only for qlik-sense-mcp-gateway)
+# MCP_AUTH_MODE=token   # token | jwt | both
 # MCP_AUTH_TOKEN=replace-with-long-random-token
 # MCP_AUTH_PASSPHRASE=replace-with-strong-passphrase
+# MCP_JWT_SECRET=replace-with-long-random-jwt-secret
+# MCP_JWT_AUDIENCE=qlik-mcp
+# MCP_JWT_ISSUER=https://your-issuer.example.com
 # MCP_GATEWAY_HOST=0.0.0.0
 # MCP_GATEWAY_PORT=8080
 # MCP_PUBLIC_PORT=8080
 # MCP_GATEWAY_PATH=/mcp
+```
+
+### 2.1. Remote Gateway Authentication Modes
+
+The remote gateway supports three authentication modes controlled by `MCP_AUTH_MODE`:
+
+- `token` (default): accepts static bearer token credentials (`MCP_AUTH_TOKEN` or `MCP_AUTH_PASSPHRASE`)
+- `jwt`: accepts signed JWTs validated with HS256 (`MCP_JWT_SECRET` required)
+- `both`: accepts both static token credentials and JWTs
+
+JWT validation rules:
+- Signature algorithm must be `HS256`
+- `exp` and `nbf` claims are enforced when present
+- `aud` is validated if `MCP_JWT_AUDIENCE` is configured
+- `iss` is validated if `MCP_JWT_ISSUER` is configured
+
+Example `.env` snippets:
+
+```bash
+# Token-only mode
+MCP_AUTH_MODE=token
+MCP_AUTH_TOKEN=replace-with-long-random-token
+
+# JWT-only mode
+MCP_AUTH_MODE=jwt
+MCP_JWT_SECRET=replace-with-long-random-jwt-secret
+MCP_JWT_AUDIENCE=qlik-mcp
+MCP_JWT_ISSUER=https://issuer.example.local
+
+# Mixed mode (accept both)
+MCP_AUTH_MODE=both
+MCP_AUTH_TOKEN=replace-with-long-random-token
+MCP_JWT_SECRET=replace-with-long-random-jwt-secret
 ```
 
 ### 3. Variable Reference
@@ -404,7 +446,7 @@ QLIK_WS_RETRIES=2       # number of endpoints to try
 | Security | `QLIK_VERIFY_SSL` | Use `false` only for controlled testing scenarios |
 | Timeouts | `QLIK_HTTP_TIMEOUT`, `QLIK_WS_TIMEOUT`, `QLIK_WS_RETRIES` | Tune only if your Qlik environment is slow or unstable |
 | Logging | `LOG_LEVEL` | Supported values: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
-| Remote gateway | `MCP_AUTH_TOKEN`, `MCP_AUTH_PASSPHRASE`, `MCP_GATEWAY_HOST`, `MCP_GATEWAY_PORT`, `MCP_PUBLIC_PORT`, `MCP_GATEWAY_PATH` | Used only when exposing the remote HTTP gateway |
+| Remote gateway | `MCP_AUTH_MODE`, `MCP_AUTH_TOKEN`, `MCP_AUTH_PASSPHRASE`, `MCP_JWT_SECRET`, `MCP_JWT_AUDIENCE`, `MCP_JWT_ISSUER`, `MCP_GATEWAY_HOST`, `MCP_GATEWAY_PORT`, `MCP_PUBLIC_PORT`, `MCP_GATEWAY_PATH` | Used only when exposing the remote HTTP gateway; supports static token, JWT, or both |
 
 ### 4. MCP Client Configuration
 
@@ -1393,9 +1435,10 @@ print('Server initialized:', server.config_valid)
 
 1. Keep certificates, tokens, passphrases, and `.env` files out of Git and externalize them through secret management where possible.
 2. Use a dedicated Qlik service account with the minimum permissions required for the enabled MCP tools.
-3. Prefer the remote gateway only behind TLS termination and rotate `MCP_AUTH_TOKEN` or `MCP_AUTH_PASSPHRASE` regularly.
+3. Prefer the remote gateway only behind TLS termination and rotate `MCP_AUTH_TOKEN`, `MCP_AUTH_PASSPHRASE`, and `MCP_JWT_SECRET` regularly.
 4. Keep `QLIK_VERIFY_SSL=true` in production and disable verification only for temporary diagnostics in controlled environments.
-5. Monitor gateway access logs and Qlik API usage so failed authentication or abnormal query patterns are visible quickly.
+5. If using JWT, validate `aud` and `iss` with `MCP_JWT_AUDIENCE` and `MCP_JWT_ISSUER` to prevent token reuse across services.
+6. Monitor gateway access logs and Qlik API usage so failed authentication or abnormal query patterns are visible quickly.
 
 ### Access Control
 
