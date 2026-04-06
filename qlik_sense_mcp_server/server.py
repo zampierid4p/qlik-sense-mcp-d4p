@@ -1,6 +1,7 @@
 """Main MCP Server for Qlik Sense APIs."""
 
 import asyncio
+import base64
 import json
 import ssl
 import sys
@@ -25,7 +26,7 @@ from .config import (
 )
 from .repository_api import QlikRepositoryAPI
 from .engine_api import QlikEngineAPI
-from .utils import generate_xrfkey
+from .utils import generate_xrfkey, validate_app_id
 from . import __version__
 
 import httpx
@@ -210,6 +211,128 @@ class QlikSenseMCPServer:
             logger.error(f"Failed to get app metadata: {e}")
             return _make_error(str(e))
 
+    def _build_qlik_download_url(self, image_url: str) -> str:
+        """Build absolute URL for image download from Qlik server."""
+        if image_url.startswith("http://") or image_url.startswith("https://"):
+            return image_url
+
+        base_url = self.config.server_url.rstrip("/")
+        if self.config.http_port and f":{self.config.http_port}" not in base_url:
+            base_url = f"{base_url}:{self.config.http_port}"
+
+        relative = image_url if image_url.startswith("/") else f"/{image_url}"
+        return f"{base_url}{relative}"
+
+    def _download_binary_from_qlik(self, image_url: str) -> Dict[str, Any]:
+        """Download binary content from Qlik server using configured certificates."""
+        absolute_url = self._build_qlik_download_url(image_url)
+        xrfkey = generate_xrfkey()
+        headers = {"X-Qlik-Xrfkey": xrfkey}
+        params = {"xrfkey": xrfkey}
+
+        client = self._create_httpx_client()
+        try:
+            response = client.get(absolute_url, headers=headers, params=params)
+            response.raise_for_status()
+            return {
+                "content": response.content,
+                "content_type": response.headers.get("content-type", "application/octet-stream"),
+                "download_url": absolute_url,
+            }
+        finally:
+            client.close()
+
+    def _capture_visualization_image_headless(self, app_id: str, object_id: str) -> Dict[str, Any]:
+        """Capture visualization image through Playwright as best-effort fallback.
+
+        This fallback is optional and only used when no direct image URL is available.
+        It lazily imports Playwright so environments without browser dependencies
+        can still use the API-first path.
+        """
+        try:
+            import importlib
+
+            sync_api = importlib.import_module("playwright.sync_api")
+            sync_playwright = getattr(sync_api, "sync_playwright")
+            PlaywrightTimeoutError = getattr(sync_api, "TimeoutError")
+        except Exception as exc:
+            return _make_error(
+                "Headless fallback unavailable: install playwright and browser binaries",
+                details=str(exc),
+            )
+
+        timeout_seconds = int(os.getenv("HEADLESS_SCREENSHOT_TIMEOUT", "30"))
+        timeout_ms = max(timeout_seconds, 5) * 1000
+        viewport_width = int(os.getenv("HEADLESS_VIEWPORT_WIDTH", "1920"))
+        viewport_height = int(os.getenv("HEADLESS_VIEWPORT_HEIGHT", "1080"))
+        executable_path = os.getenv("HEADLESS_BROWSER_EXECUTABLE") or None
+        user_directory = self.config.user_directory
+        user_id = self.config.user_id
+        target_url = f"{self.config.server_url.rstrip('/')}/single/?appid={app_id}&obj={object_id}"
+
+        with sync_playwright() as playwright:
+            browser = None
+            context = None
+            try:
+                launch_options: Dict[str, Any] = {
+                    "headless": True,
+                }
+                if executable_path:
+                    launch_options["executable_path"] = executable_path
+
+                browser = playwright.chromium.launch(**launch_options)
+                context = browser.new_context(
+                    viewport={"width": viewport_width, "height": viewport_height},
+                    ignore_https_errors=not self.config.verify_ssl,
+                    extra_http_headers={
+                        "X-Qlik-User": f"UserDirectory={user_directory}; UserId={user_id}"
+                    },
+                )
+
+                page = context.new_page()
+                page.goto(target_url, wait_until="domcontentloaded", timeout=timeout_ms)
+
+                preferred_selectors = [
+                    f"[data-qvid='{object_id}']",
+                    f"#{object_id}",
+                    "svg",
+                    "canvas",
+                ]
+
+                image_bytes: Optional[bytes] = None
+                for selector in preferred_selectors:
+                    try:
+                        locator = page.locator(selector).first
+                        locator.wait_for(state="visible", timeout=3000)
+                        image_bytes = locator.screenshot(type="png")
+                        if image_bytes:
+                            break
+                    except Exception:
+                        continue
+
+                if not image_bytes:
+                    image_bytes = page.screenshot(type="png", full_page=True)
+
+                return {
+                    "format": "png",
+                    "content_type": "image/png",
+                    "content": image_bytes,
+                    "capture_mode": "headless",
+                    "source_url": target_url,
+                }
+            except PlaywrightTimeoutError:
+                return _make_error(
+                    "Headless fallback timeout while rendering visualization",
+                    app_id=app_id,
+                    object_id=object_id,
+                    timeout_seconds=timeout_seconds,
+                )
+            finally:
+                if context:
+                    context.close()
+                if browser:
+                    browser.close()
+
     def _filter_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
         """Filter metadata to remove system fields and hidden items."""
         # Fields to remove from output
@@ -255,6 +378,39 @@ class QlikSenseMCPServer:
             result['tables'] = filtered['tables']
 
         return result
+
+    def _resolve_app_id(self, name_or_id: str) -> str:
+        """Resolve an application identifier that can be either GUID or app name."""
+        if not name_or_id or not str(name_or_id).strip():
+            raise ValueError("Application GUID or name must be provided")
+
+        candidate = str(name_or_id).strip()
+        if validate_app_id(candidate):
+            return candidate
+
+        direct_lookup = self.repository_api.get_app_by_id(candidate)
+        if isinstance(direct_lookup, dict) and direct_lookup.get("id"):
+            return str(direct_lookup["id"])
+
+        apps_payload = self.repository_api.get_comprehensive_apps(
+            limit=MAX_APPS_LIMIT,
+            offset=0,
+            name=candidate,
+            stream=None,
+            published=None,
+        )
+        apps = apps_payload.get("apps", []) if isinstance(apps_payload, dict) else []
+        if not apps:
+            raise ValueError(f"App not found: {candidate}")
+
+        lowered = candidate.lower()
+        exact_match = next((app for app in apps if app.get("name", "").lower() == lowered), None)
+        selected = exact_match or apps[0]
+        app_id = selected.get("guid", "")
+        if not app_id:
+            raise ValueError(f"App not found: {candidate}")
+
+        return str(app_id)
 
     def _setup_handlers(self):
         """Setup MCP server handlers."""
@@ -314,12 +470,12 @@ class QlikSenseMCPServer:
                     }
                 ),
 
-                Tool(name="get_app_script", description="Get load script from app", inputSchema={"type": "object", "properties": {"app_id": {"type": "string", "description": "Application ID"}}, "required": ["app_id"]}),
-                Tool(name="get_app_field_statistics", description="Get comprehensive statistics for a field", inputSchema={"type": "object", "properties": {"app_id": {"type": "string", "description": "Application ID"}, "field_name": {"type": "string", "description": "Field name"}}, "required": ["app_id", "field_name"]}),
+                Tool(name="get_app_script", description="Get load script from app", inputSchema={"type": "object", "properties": {"app_id": {"type": "string", "description": "Application GUID or application name"}}, "required": ["app_id"]}),
+                Tool(name="get_app_field_statistics", description="Get comprehensive statistics for a field", inputSchema={"type": "object", "properties": {"app_id": {"type": "string", "description": "Application GUID or application name"}, "field_name": {"type": "string", "description": "Field name"}}, "required": ["app_id", "field_name"]}),
                 Tool(name="engine_create_hypercube", description="Create hypercube for data analysis with custom sorting options. IMPORTANT: To get top-N records, use qSortByExpression: 1 in dimension sorting with qExpression containing the measure formula (e.g., 'Count(field)' for ascending, '-Count(field)' for descending). Measure sorting is ignored by Qlik Engine.", inputSchema={
                     "type": "object",
                     "properties": {
-                        "app_id": {"type": "string", "description": "Application ID"},
+                        "app_id": {"type": "string", "description": "Application GUID or application name"},
                         "dimensions": {
                             "type": "array",
                             "items": {
@@ -372,7 +528,7 @@ class QlikSenseMCPServer:
                     inputSchema={
                         "type": "object",
                         "properties": {
-                            "app_id": {"type": "string", "description": "Application GUID"},
+                            "app_id": {"type": "string", "description": "Application GUID or application name"},
                             "field_name": {"type": "string", "description": "Field name"},
                             "limit": {"type": "integer", "description": f"Max values to return (default: {DEFAULT_FIELD_LIMIT}, max: {MAX_FIELD_LIMIT})", "default": DEFAULT_FIELD_LIMIT},
                             "offset": {"type": "integer", "description": "Offset for pagination (default: 0)", "default": 0},
@@ -389,7 +545,7 @@ class QlikSenseMCPServer:
                     inputSchema={
                         "type": "object",
                         "properties": {
-                            "app_id": {"type": "string", "description": "Application GUID"},
+                            "app_id": {"type": "string", "description": "Application GUID or application name"},
                             "limit": {"type": "integer", "description": f"Max variables to return (default: {DEFAULT_FIELD_LIMIT}, max: {MAX_FIELD_LIMIT})", "default": DEFAULT_FIELD_LIMIT},
                             "offset": {"type": "integer", "description": "Offset for pagination (default: 0)", "default": 0},
                             "created_in_script": {"type": "string", "description": "Return only variables created in script (true/false). If omitted, return both"},
@@ -406,7 +562,7 @@ class QlikSenseMCPServer:
                     inputSchema={
                         "type": "object",
                         "properties": {
-                            "app_id": {"type": "string", "description": "Application GUID"}
+                            "app_id": {"type": "string", "description": "Application GUID or application name"}
                         },
                         "required": ["app_id"]
                     }
@@ -417,7 +573,7 @@ class QlikSenseMCPServer:
                     inputSchema={
                         "type": "object",
                         "properties": {
-                            "app_id": {"type": "string", "description": "Application GUID"},
+                            "app_id": {"type": "string", "description": "Application GUID or application name"},
                             "sheet_id": {"type": "string", "description": "Sheet GUID"}
                         },
                         "required": ["app_id", "sheet_id"]
@@ -429,8 +585,206 @@ class QlikSenseMCPServer:
                     inputSchema={
                         "type": "object",
                         "properties": {
-                            "app_id": {"type": "string", "description": "Application GUID"},
+                            "app_id": {"type": "string", "description": "Application GUID or application name"},
                             "object_id": {"type": "string", "description": "Object ID to retrieve"}
+                        },
+                        "required": ["app_id", "object_id"]
+                    }
+                ),
+                Tool(
+                    name="get_visualization_image",
+                    description="Return visualization image as base64 by resolving image URL via Engine API layout/snapshot and downloading it from Qlik Sense for Windows, with optional headless fallback.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "app_id": {"type": "string", "description": "Application GUID or application name"},
+                            "object_id": {"type": "string", "description": "Visualization object ID"},
+                            "format": {
+                                "type": "string",
+                                "description": "Preferred output format hint (auto/png/svg/jpeg). The tool returns original content format from Qlik.",
+                                "default": "auto"
+                            },
+                            "headless_fallback": {
+                                "type": "boolean",
+                                "description": "If true, try browser screenshot fallback when Engine API does not provide an image URL.",
+                                "default": False
+                            }
+                        },
+                        "required": ["app_id", "object_id"]
+                    }
+                ),
+                Tool(
+                    name="get_app_reload_chain",
+                    description="Get reload tasks and recent execution history for an app.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "app_id": {"type": "string", "description": "Application GUID or application name"}
+                        },
+                        "required": ["app_id"]
+                    }
+                ),
+                Tool(
+                    name="get_app_objects_detailed",
+                    description="Get repository objects for an app, optionally filtered by object type.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "app_id": {"type": "string", "description": "Application GUID or application name"},
+                            "object_type": {"type": "string", "description": "Optional repository object type filter"}
+                        },
+                        "required": ["app_id"]
+                    }
+                ),
+                Tool(
+                    name="engine_get_field_info",
+                    description="Get field description and sample values from the Engine API.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "app_id": {"type": "string", "description": "Application GUID or application name"},
+                            "field_name": {"type": "string", "description": "Field name"}
+                        },
+                        "required": ["app_id", "field_name"]
+                    }
+                ),
+                Tool(
+                    name="engine_extract_data",
+                    description="Create a hypercube and return extracted data rows.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "app_id": {"type": "string", "description": "Application GUID or application name"},
+                            "dimensions": {"type": "array", "description": "Dimension definitions", "default": []},
+                            "measures": {"type": "array", "description": "Measure definitions", "default": []},
+                            "max_rows": {"type": "integer", "description": "Maximum rows to return", "default": DEFAULT_HYPERCUBE_MAX_ROWS}
+                        },
+                        "required": ["app_id"]
+                    }
+                ),
+                Tool(
+                    name="engine_get_visualization_data",
+                    description="Get data for an existing visualization object through the Engine API.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "app_id": {"type": "string", "description": "Application GUID or application name"},
+                            "object_id": {"type": "string", "description": "Visualization object ID"}
+                        },
+                        "required": ["app_id", "object_id"]
+                    }
+                ),
+                Tool(
+                    name="engine_search_and_analyze",
+                    description="Search app objects and fields for one or more search terms.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "app_id": {"type": "string", "description": "Application GUID or application name"},
+                            "search_terms": {"type": "array", "items": {"type": "string"}, "description": "Search terms to analyze"}
+                        },
+                        "required": ["app_id", "search_terms"]
+                    }
+                ),
+                Tool(
+                    name="engine_get_master_items",
+                    description="Get master dimensions, measures and variables from an app.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "app_id": {"type": "string", "description": "Application GUID or application name"}
+                        },
+                        "required": ["app_id"]
+                    }
+                ),
+                Tool(
+                    name="engine_calculate_expression",
+                    description="Calculate an expression in app context, optionally grouped by dimensions.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "app_id": {"type": "string", "description": "Application GUID or application name"},
+                            "expression": {"type": "string", "description": "Qlik expression to evaluate"},
+                            "dimensions": {"type": "array", "items": {"type": "string"}, "description": "Optional dimensions", "default": []}
+                        },
+                        "required": ["app_id", "expression"]
+                    }
+                ),
+                Tool(
+                    name="engine_get_associations",
+                    description="Get field associations and data model information for an app.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "app_id": {"type": "string", "description": "Application GUID or application name"}
+                        },
+                        "required": ["app_id"]
+                    }
+                ),
+                Tool(
+                    name="engine_smart_search",
+                    description="Get smart search suggestions for one or more terms.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "app_id": {"type": "string", "description": "Application GUID or application name"},
+                            "search_terms": {"type": "array", "items": {"type": "string"}, "description": "Search terms"}
+                        },
+                        "required": ["app_id", "search_terms"]
+                    }
+                ),
+                Tool(
+                    name="engine_create_pivot_analysis",
+                    description="Create a pivot analysis from dimensions and measures.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "app_id": {"type": "string", "description": "Application GUID or application name"},
+                            "dimensions": {"type": "array", "description": "Dimension definitions", "default": []},
+                            "measures": {"type": "array", "description": "Measure definitions", "default": []},
+                            "max_rows": {"type": "integer", "description": "Maximum rows to return", "default": DEFAULT_HYPERCUBE_MAX_ROWS}
+                        },
+                        "required": ["app_id"]
+                    }
+                ),
+                Tool(
+                    name="engine_create_simple_table",
+                    description="Create a simple table from dimensions and optional measures.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "app_id": {"type": "string", "description": "Application GUID or application name"},
+                            "dimensions": {"type": "array", "description": "Dimension definitions"},
+                            "measures": {"type": "array", "description": "Measure definitions", "default": []},
+                            "max_rows": {"type": "integer", "description": "Maximum rows to return", "default": DEFAULT_HYPERCUBE_MAX_ROWS}
+                        },
+                        "required": ["app_id", "dimensions"]
+                    }
+                ),
+                Tool(
+                    name="engine_get_chart_data",
+                    description="Build chart data for a given chart type.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "app_id": {"type": "string", "description": "Application GUID or application name"},
+                            "chart_type": {"type": "string", "description": "Chart type to generate"},
+                            "dimensions": {"type": "array", "description": "Dimension definitions", "default": []},
+                            "measures": {"type": "array", "description": "Measure definitions", "default": []},
+                            "max_rows": {"type": "integer", "description": "Maximum rows to return", "default": DEFAULT_HYPERCUBE_MAX_ROWS}
+                        },
+                        "required": ["app_id", "chart_type"]
+                    }
+                ),
+                Tool(
+                    name="engine_export_visualization_to_csv",
+                    description="Export a visualization object to a CSV file on the server filesystem.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "app_id": {"type": "string", "description": "Application GUID or application name"},
+                            "object_id": {"type": "string", "description": "Visualization object ID"},
+                            "file_path": {"type": "string", "description": "Destination CSV path", "default": "/tmp/export.csv"}
                         },
                         "required": ["app_id", "object_id"]
                     }
@@ -512,43 +866,28 @@ class QlikSenseMCPServer:
                     req_app_id = arguments.get("app_id") or arguments.get("appId") or arguments.get("id")
                     req_name = arguments.get("name") or arguments.get("appName")
 
-                    def _resolve_app() -> Dict[str, Any]:
-                        """Resolve application by ID or name from Repository API."""
-                        try:
-                            if req_app_id:
-                                app_meta = self.repository_api.get_app_by_id(req_app_id)
-                                if isinstance(app_meta, dict) and app_meta.get("id"):
-                                    return {
-                                        "app_id": app_meta.get("id"),
-                                        "name": app_meta.get("name", ""),
-                                        "description": app_meta.get("description") or "",
-                                        "stream": (app_meta.get("stream", {}) or {}).get("name", "") if app_meta.get("published") else "",
-                                        "modified_dttm": app_meta.get("modifiedDate", "") or "",
-                                        "reload_dttm": app_meta.get("lastReloadTime", "") or ""
-                                    }
-                                return _make_error("App not found by provided app_id")
-                            if req_name:
-                                apps_payload = self.repository_api.get_comprehensive_apps(limit=MAX_APPS_LIMIT, offset=0, name=req_name, stream=None, published=None)
-                                apps = apps_payload.get("apps", []) if isinstance(apps_payload, dict) else []
-                                if not apps:
-                                    return _make_error("No apps found by name")
-                                lowered = req_name.lower()
-                                exact = [a for a in apps if a.get("name", "").lower() == lowered]
-                                selected = exact[0] if exact else apps[0]
-                                selected["app_id"] = selected.pop("guid", "")
-                                return selected
-                            return _make_error("Either app_id or name must be provided")
-                        except Exception as e:
-                            return _make_error(str(e))
-
                     def _get_app_details():
                         """Get application details with metadata, fields and tables."""
                         try:
-                            resolved = _resolve_app()
-                            if "error" in resolved:
-                                return resolved
+                            if req_app_id:
+                                app_id = self._resolve_app_id(req_app_id)
+                            elif req_name:
+                                app_id = self._resolve_app_id(req_name)
+                            else:
+                                return _make_error("Either app_id or name must be provided")
 
-                            app_id = resolved.get("app_id")
+                            app_meta = self.repository_api.get_app_by_id(app_id)
+                            if not isinstance(app_meta, dict) or not app_meta.get("id"):
+                                return _make_error("App not found by provided app_id")
+
+                            resolved = {
+                                "app_id": app_meta.get("id"),
+                                "name": app_meta.get("name", ""),
+                                "description": app_meta.get("description") or "",
+                                "stream": (app_meta.get("stream", {}) or {}).get("name", "") if app_meta.get("published") else "",
+                                "modified_dttm": app_meta.get("modifiedDate", "") or "",
+                                "reload_dttm": app_meta.get("lastReloadTime", "") or "",
+                            }
 
                             metadata = None
                             proxy_error = None
@@ -603,7 +942,7 @@ class QlikSenseMCPServer:
                     ]
 
                 elif name == "get_app_script":
-                    app_id = arguments["app_id"]
+                    app_id = self._resolve_app_id(arguments["app_id"])
 
                     def _get_script():
                         app_handle = -1
@@ -646,7 +985,7 @@ class QlikSenseMCPServer:
                     ]
 
                 elif name == "get_app_field_statistics":
-                    app_id = arguments["app_id"]
+                    app_id = self._resolve_app_id(arguments["app_id"])
                     field_name = arguments["field_name"]
 
                     def _get_field_statistics():
@@ -690,7 +1029,7 @@ class QlikSenseMCPServer:
                     ]
 
                 elif name == "engine_create_hypercube":
-                    app_id = arguments["app_id"]
+                    app_id = self._resolve_app_id(arguments["app_id"])
                     dimensions = arguments.get("dimensions", [])
                     measures = arguments.get("measures", [])
                     max_rows = arguments.get("max_rows", DEFAULT_HYPERCUBE_MAX_ROWS)
@@ -718,7 +1057,7 @@ class QlikSenseMCPServer:
                     ]
 
                 elif name == "get_app_reload_chain":
-                    app_id = arguments["app_id"]
+                    app_id = self._resolve_app_id(arguments["app_id"])
 
                     def _get_reload_chain():
                         tasks = self.repository_api.get_reload_tasks_for_app(app_id)
@@ -744,7 +1083,7 @@ class QlikSenseMCPServer:
                     ]
 
                 elif name == "get_app_objects_detailed":
-                    app_id = arguments["app_id"]
+                    app_id = self._resolve_app_id(arguments["app_id"])
                     object_type = arguments.get("object_type")
                     objects = await asyncio.to_thread(self.repository_api.get_app_objects, app_id, object_type)
                     return [
@@ -754,7 +1093,7 @@ class QlikSenseMCPServer:
                         )
                     ]
                 elif name == "get_app_field":
-                    app_id = arguments["app_id"]
+                    app_id = self._resolve_app_id(arguments["app_id"])
                     field_name = arguments["field_name"]
                     limit = arguments.get("limit", DEFAULT_FIELD_LIMIT)
                     offset = arguments.get("offset", 0)
@@ -815,7 +1154,7 @@ class QlikSenseMCPServer:
                     return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
 
                 elif name == "get_app_variables":
-                    app_id = arguments["app_id"]
+                    app_id = self._resolve_app_id(arguments["app_id"])
                     limit = arguments.get("limit", DEFAULT_FIELD_LIMIT)
                     offset = arguments.get("offset", 0)
                     created_in_script_arg = arguments.get("created_in_script", None)
@@ -910,7 +1249,7 @@ class QlikSenseMCPServer:
                     return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
 
                 elif name == "get_app_sheets":
-                    app_id = arguments["app_id"]
+                    app_id = self._resolve_app_id(arguments["app_id"])
 
                     def _get_app_sheets():
                         try:
@@ -944,7 +1283,7 @@ class QlikSenseMCPServer:
                     return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
 
                 elif name == "get_app_sheet_objects":
-                    app_id = arguments["app_id"]
+                    app_id = self._resolve_app_id(arguments["app_id"])
                     sheet_id = arguments["sheet_id"]
 
                     def _get_sheet_objects():
@@ -984,7 +1323,7 @@ class QlikSenseMCPServer:
                     return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
 
                 elif name == "engine_get_field_info":
-                    app_id = arguments["app_id"]
+                    app_id = self._resolve_app_id(arguments["app_id"])
                     field_name = arguments["field_name"]
 
                     def _get_field_info():
@@ -1013,7 +1352,7 @@ class QlikSenseMCPServer:
                     ]
 
                 elif name == "engine_extract_data":
-                    app_id = arguments["app_id"]
+                    app_id = self._resolve_app_id(arguments["app_id"])
                     dimensions = arguments.get("dimensions", [])
                     measures = arguments.get("measures", [])
                     max_rows = arguments.get("max_rows", DEFAULT_HYPERCUBE_MAX_ROWS)
@@ -1049,7 +1388,7 @@ class QlikSenseMCPServer:
                     ]
 
                 elif name == "engine_get_visualization_data":
-                    app_id = arguments["app_id"]
+                    app_id = self._resolve_app_id(arguments["app_id"])
                     object_id = arguments["object_id"]
 
                     def _get_visualization_data():
@@ -1075,7 +1414,7 @@ class QlikSenseMCPServer:
                     ]
 
                 elif name == "engine_search_and_analyze":
-                    app_id = arguments["app_id"]
+                    app_id = self._resolve_app_id(arguments["app_id"])
                     search_terms = arguments["search_terms"]
 
                     def _search_analyze():
@@ -1112,7 +1451,7 @@ class QlikSenseMCPServer:
                     ]
 
                 elif name == "engine_get_master_items":
-                    app_id = arguments["app_id"]
+                    app_id = self._resolve_app_id(arguments["app_id"])
 
                     def _get_master_items():
                         self.engine_api.connect(app_id)
@@ -1143,7 +1482,7 @@ class QlikSenseMCPServer:
                     ]
 
                 elif name == "engine_calculate_expression":
-                    app_id = arguments["app_id"]
+                    app_id = self._resolve_app_id(arguments["app_id"])
                     expression = arguments["expression"]
                     dimensions = arguments.get("dimensions", [])
 
@@ -1168,7 +1507,7 @@ class QlikSenseMCPServer:
                     ]
 
                 elif name == "engine_get_associations":
-                    app_id = arguments["app_id"]
+                    app_id = self._resolve_app_id(arguments["app_id"])
 
                     def _get_associations():
                         self.engine_api.connect(app_id)
@@ -1197,7 +1536,7 @@ class QlikSenseMCPServer:
                     ]
 
                 elif name == "engine_smart_search":
-                    app_id = arguments["app_id"]
+                    app_id = self._resolve_app_id(arguments["app_id"])
                     search_terms = arguments["search_terms"]
 
                     def _smart_search():
@@ -1225,7 +1564,7 @@ class QlikSenseMCPServer:
                     ]
 
                 elif name == "engine_create_pivot_analysis":
-                    app_id = arguments["app_id"]
+                    app_id = self._resolve_app_id(arguments["app_id"])
                     dimensions = arguments.get("dimensions", [])
                     measures = arguments.get("measures", [])
                     max_rows = arguments.get("max_rows", DEFAULT_HYPERCUBE_MAX_ROWS)
@@ -1262,7 +1601,7 @@ class QlikSenseMCPServer:
                     ]
 
                 elif name == "engine_create_simple_table":
-                    app_id = arguments["app_id"]
+                    app_id = self._resolve_app_id(arguments["app_id"])
                     dimensions = arguments["dimensions"]
                     measures = arguments.get("measures", [])
                     max_rows = arguments.get("max_rows", DEFAULT_HYPERCUBE_MAX_ROWS)
@@ -1290,7 +1629,7 @@ class QlikSenseMCPServer:
                     ]
 
                 elif name == "engine_get_chart_data":
-                    app_id = arguments["app_id"]
+                    app_id = self._resolve_app_id(arguments["app_id"])
                     chart_type = arguments["chart_type"]
                     dimensions = arguments.get("dimensions", [])
                     measures = arguments.get("measures", [])
@@ -1319,7 +1658,7 @@ class QlikSenseMCPServer:
                     ]
 
                 elif name == "engine_export_visualization_to_csv":
-                    app_id = arguments["app_id"]
+                    app_id = self._resolve_app_id(arguments["app_id"])
                     object_id = arguments["object_id"]
                     file_path = arguments.get("file_path", "/tmp/export.csv")
 
@@ -1346,7 +1685,7 @@ class QlikSenseMCPServer:
                     ]
 
                 elif name == "get_app_object":
-                    app_id = arguments["app_id"]
+                    app_id = self._resolve_app_id(arguments["app_id"])
                     object_id = arguments["object_id"]
 
                     def _get_app_object():
@@ -1376,6 +1715,89 @@ class QlikSenseMCPServer:
                             self.engine_api.disconnect()
 
                     result = await asyncio.to_thread(_get_app_object)
+                    return [
+                        TextContent(
+                            type="text",
+                            text=json.dumps(result, indent=2, ensure_ascii=False)
+                        )
+                    ]
+
+                elif name == "get_visualization_image":
+                    app_id = self._resolve_app_id(arguments["app_id"])
+                    object_id = arguments["object_id"]
+                    requested_format = str(arguments.get("format", "auto")).lower()
+                    headless_fallback = bool(arguments.get("headless_fallback", False))
+
+                    def _get_visualization_image():
+                        try:
+                            self.engine_api.connect()
+                            app_result = self.engine_api.open_doc(app_id, no_data=False)
+                            app_handle = app_result.get("qReturn", {}).get("qHandle", -1)
+                            if app_handle == -1:
+                                return _make_error("Failed to open app", app_id=app_id)
+
+                            image_ref = self.engine_api.get_visualization_image_reference(app_handle, object_id)
+                            used_headless_fallback = False
+                            source_url = ""
+                            download_url = ""
+
+                            if "error" in image_ref:
+                                if not headless_fallback:
+                                    return _make_error(
+                                        image_ref["error"],
+                                        app_id=app_id,
+                                        object_id=object_id,
+                                        object_type=image_ref.get("object_type", ""),
+                                    )
+
+                                headless_result = self._capture_visualization_image_headless(app_id, object_id)
+                                if "error" in headless_result:
+                                    return _make_error(
+                                        image_ref.get("error", "Image extraction failed"),
+                                        app_id=app_id,
+                                        object_id=object_id,
+                                        headless_error=headless_result.get("error"),
+                                        headless_details=headless_result.get("details", ""),
+                                    )
+
+                                content = headless_result.get("content", b"")
+                                content_type = headless_result.get("content_type", "image/png")
+                                used_headless_fallback = True
+                                source_url = headless_result.get("source_url", "")
+                            else:
+                                download = self._download_binary_from_qlik(image_ref["image_url"])
+                                content = download.get("content", b"")
+                                content_type = download.get("content_type", "application/octet-stream")
+                                source_url = image_ref["image_url"]
+                                download_url = download.get("download_url", "")
+
+                            inferred_format = "binary"
+                            if "png" in content_type:
+                                inferred_format = "png"
+                            elif "svg" in content_type:
+                                inferred_format = "svg"
+                            elif "jpeg" in content_type or "jpg" in content_type:
+                                inferred_format = "jpeg"
+
+                            return {
+                                "app_id": app_id,
+                                "object_id": object_id,
+                                "object_type": image_ref.get("object_type", ""),
+                                "requested_format": requested_format,
+                                "format": inferred_format,
+                                "used_headless_fallback": used_headless_fallback,
+                                "content_type": content_type,
+                                "size_bytes": len(content),
+                                "base64_image": base64.b64encode(content).decode("ascii"),
+                                "source_url": source_url,
+                                "download_url": download_url,
+                            }
+                        except Exception as e:
+                            return _make_error(str(e), app_id=app_id, object_id=object_id)
+                        finally:
+                            self.engine_api.disconnect()
+
+                    result = await asyncio.to_thread(_get_visualization_image)
                     return [
                         TextContent(
                             type="text",
@@ -1497,10 +1919,10 @@ EXAMPLES:
     qlik-sense-mcp-server
 
 AVAILABLE TOOLS:
-    Repository API: get_apps, get_app_details
-    Engine API: get_app_sheets, get_app_sheet_objects, get_app_script, get_app_field, get_app_variables, get_app_field_statistics, engine_create_hypercube, get_app_object
+    Repository API: get_apps, get_app_details, get_app_reload_chain, get_app_objects_detailed
+    Engine API: get_app_sheets, get_app_sheet_objects, get_app_script, get_app_field, get_app_variables, get_app_field_statistics, engine_create_hypercube, get_app_object, get_visualization_image, engine_get_field_info, engine_extract_data, engine_get_visualization_data, engine_search_and_analyze, engine_get_master_items, engine_calculate_expression, engine_get_associations, engine_smart_search, engine_create_pivot_analysis, engine_create_simple_table, engine_get_chart_data, engine_export_visualization_to_csv
 
-    Total: 10 tools for Qlik Sense analytics operations
+    Total: 25 tools for Qlik Sense analytics operations
 
 MORE INFO:
     GitHub: https://github.com/data4prime/qlik-sense-mcp-d4p

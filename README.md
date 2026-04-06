@@ -53,6 +53,7 @@ Qlik Sense MCP Server bridges Qlik Sense Enterprise with systems supporting Mode
 | `get_app_field_statistics` | Get comprehensive field statistics | Engine | ✅ |
 | `engine_create_hypercube` | Create hypercube for data analysis | Engine | ✅ |
 | `get_app_object` | Get specific object layout by ID (GetObject + GetLayout) | Engine | ✅ |
+| `get_visualization_image` | Return visualization image as base64 (Engine URL first, optional headless fallback) | Engine | ✅ |
 
 ## Installation
 
@@ -488,7 +489,8 @@ Create `mcp.json` file for MCP client integration:
         "get_app_variables",
         "get_app_sheets",
         "get_app_sheet_objects",
-        "get_app_object"
+        "get_app_object",
+        "get_visualization_image"
       ]
     }
   }
@@ -567,7 +569,13 @@ QLIK_CA_CERT_PATH=/certs/root.pem
 
 ```bash
 docker build -t qlik-sense-mcp-server .
+
+# Optional: include Chromium runtime for headless fallback in get_visualization_image
+docker build --build-arg INSTALL_PLAYWRIGHT=true -t qlik-sense-mcp-server:playwright .
 ```
+
+If you enable the headless fallback path, the runtime also needs Playwright browser binaries.
+You can provide a custom browser path with `HEADLESS_BROWSER_EXECUTABLE`.
 
 ### 3. Run in Stdio Mode
 
@@ -726,7 +734,7 @@ docker login
 ```bash
 export DOCKERHUB_USER=your-dockerhub-user
 export IMAGE_NAME=qlik-sense-mcp-server
-export IMAGE_TAG=1.4.7
+export IMAGE_TAG=1.5.0
 export IMAGE_REF="$DOCKERHUB_USER/$IMAGE_NAME:$IMAGE_TAG"
 ```
 
@@ -1098,6 +1106,30 @@ Retrieves layout of a specific object by its ID using sequential GetObject and G
   "qLayout": {
     "...": "..."
   }
+}
+```
+
+### get_visualization_image
+Returns a visualization image as base64. The tool first tries Engine API layout/snapshot image URLs and, when requested, can fall back to a headless browser screenshot.
+
+**Parameters:**
+- `app_id` (required): Application identifier
+- `object_id` (required): Visualization object identifier
+- `format` (optional): Preferred hint (`auto`, `png`, `svg`, `jpeg`)
+- `headless_fallback` (optional): If `true`, enables browser screenshot fallback when no image URL is exposed by Engine API
+
+**Returns:** Encoded image payload and metadata
+
+**Example:**
+```json
+{
+  "app_id": "e2958865-2aed-4f8a-b3c7-20e6f21d275c",
+  "object_id": "CH01",
+  "format": "png",
+  "content_type": "image/png",
+  "size_bytes": 45123,
+  "used_headless_fallback": false,
+  "base64_image": "iVBORw0KGgoAAAANSUhEUgAA..."
 }
 ```
 

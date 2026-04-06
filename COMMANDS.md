@@ -129,6 +129,9 @@ make docker-build
 # Or build manually with a fixed local tag
 docker build -t qlik-sense-mcp-server .
 
+# Optional: include Chromium for headless fallback in get_visualization_image
+docker build --build-arg INSTALL_PLAYWRIGHT=true -t qlik-sense-mcp-server:playwright .
+
 # Run stdio container
 docker run -i --rm --env-file .env -v "$(pwd)/certs:/certs:ro" qlik-sense-mcp-server
 
@@ -164,6 +167,11 @@ make remote-logs
 # Stop the remote gateway
 make remote-down
 ```
+
+Headless fallback for `get_visualization_image`:
+- Default flow is API-first (no browser required)
+- Enable fallback with tool argument `headless_fallback=true`
+- Browser runtime knobs in `.env`: `HEADLESS_SCREENSHOT_TIMEOUT`, `HEADLESS_VIEWPORT_WIDTH`, `HEADLESS_VIEWPORT_HEIGHT`, `HEADLESS_BROWSER_EXECUTABLE`
 
 Notes:
 - `docker-compose.yml` is for stdio transport and does not publish a host port
@@ -206,7 +214,7 @@ DOCKERHUB=datasynapsi make docker-push-latest
 
 Optional overrides:
 - `DOCKER_IMAGE_NAME=qlik-sense-mcp-server`
-- `DOCKER_IMAGE_TAG=1.4.7`
+- `DOCKER_IMAGE_TAG=1.5.0`
 - `DOCKER='sudo docker'` on Linux if needed
 
 ## Git Update Workflow
@@ -222,7 +230,7 @@ git fetch --all --tags
 git pull --rebase
 
 # Move to a specific release tag
-git checkout v1.4.7
+git checkout v1.5.0
 ```
 
 After updating code, refresh local dependencies and images as needed:

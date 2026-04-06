@@ -16,6 +16,8 @@ RUN python -m build --wheel --outdir /dist
 # ── Stage 2: runtime ──────────────────────────────────────────────────────────
 FROM python:3.12-slim AS runtime
 
+ARG INSTALL_PLAYWRIGHT="false"
+
 # Metadata
 LABEL org.opencontainers.image.title="Qlik Sense MCP Server" \
       org.opencontainers.image.description="MCP Server for Qlik Sense Enterprise APIs" \
@@ -26,14 +28,23 @@ RUN addgroup --system mcp && adduser --system --ingroup mcp --no-create-home mcp
 
 WORKDIR /app
 
+# Keep browser binaries in a stable path when Playwright support is enabled.
+ENV PLAYWRIGHT_BROWSERS_PATH="/ms-playwright"
+
 # Install the wheel built in the previous stage
 COPY --from=builder /dist/*.whl /tmp/
 RUN pip install --no-cache-dir /tmp/*.whl && rm /tmp/*.whl
+
+# Optional browser runtime for get_visualization_image headless fallback.
+RUN if [ "${INSTALL_PLAYWRIGHT}" = "true" ]; then \
+                  python -m playwright install --with-deps chromium; \
+            fi
 
 # Directory where certificates are expected to be mounted at runtime.
 # The paths below correspond to the QLIK_*_CERT_PATH env-var defaults used
 # in docker-compose.yml; override them freely with environment variables.
 RUN mkdir -p /certs && chown mcp:mcp /certs
+RUN mkdir -p /ms-playwright && chown -R mcp:mcp /ms-playwright
 
 USER mcp
 

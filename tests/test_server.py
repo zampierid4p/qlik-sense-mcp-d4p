@@ -1,11 +1,16 @@
 """Tests for server module."""
 
+import base64
 import json
 import pytest
 from unittest.mock import patch, MagicMock
-from mcp.types import CallToolRequest
+from mcp.types import CallToolRequest, ListToolsRequest
 from qlik_sense_mcp_server.server import _make_error, QlikSenseMCPServer
 from qlik_sense_mcp_server import __version__
+
+
+TEST_APP_ID = "11111111-1111-1111-1111-111111111111"
+RESOLVED_APP_ID = "22222222-2222-2222-2222-222222222222"
 
 
 class TestMakeError:
@@ -31,8 +36,8 @@ class TestVersion:
         for part in parts:
             assert part.isdigit()
 
-    def test_version_is_1_4_7(self):
-        assert __version__ == "1.4.7"
+    def test_version_is_1_5_0(self):
+        assert __version__ == "1.5.0"
 
 
 class TestQlikSenseMCPServer:
@@ -90,7 +95,7 @@ class TestQlikSenseMCPServer:
     async def test_get_app_details_falls_back_to_engine_api_when_ticket_is_unavailable(self):
         server = QlikSenseMCPServer()
         server.repository_api.get_app_by_id = MagicMock(return_value={
-            "id": "app-123",
+            "id": TEST_APP_ID,
             "name": "Demo App",
             "description": "demo",
             "published": True,
@@ -106,14 +111,14 @@ class TestQlikSenseMCPServer:
         })
 
         handler = server.server.request_handlers[CallToolRequest]
-        result = await handler(CallToolRequest(params={"name": "get_app_details", "arguments": {"app_id": "app-123"}}))
+        result = await handler(CallToolRequest(params={"name": "get_app_details", "arguments": {"app_id": TEST_APP_ID}}))
         payload = json.loads(result.root.content[0].text)
 
-        assert payload["metainfo"]["app_id"] == "app-123"
+        assert payload["metainfo"]["app_id"] == TEST_APP_ID
         assert payload["fields"] == [{"name": "Customer"}]
         assert payload["tables"] == [{"name": "Facts"}]
         server._get_app_metadata_via_proxy.assert_not_called()
-        server.engine_api.get_detailed_app_metadata.assert_called_once_with("app-123")
+        server.engine_api.get_detailed_app_metadata.assert_called_once_with(TEST_APP_ID)
 
     @pytest.mark.asyncio
     @patch.dict("os.environ", {
@@ -128,7 +133,7 @@ class TestQlikSenseMCPServer:
     async def test_get_app_details_accepts_appid_alias(self):
         server = QlikSenseMCPServer()
         server.repository_api.get_app_by_id = MagicMock(return_value={
-            "id": "app-123",
+            "id": TEST_APP_ID,
             "name": "Demo App",
             "description": "demo",
             "published": True,
@@ -144,11 +149,72 @@ class TestQlikSenseMCPServer:
         })
 
         handler = server.server.request_handlers[CallToolRequest]
-        result = await handler(CallToolRequest(params={"name": "get_app_details", "arguments": {"appId": "app-123"}}))
+        result = await handler(CallToolRequest(params={"name": "get_app_details", "arguments": {"appId": TEST_APP_ID}}))
         payload = json.loads(result.root.content[0].text)
 
-        assert payload["metainfo"]["app_id"] == "app-123"
-        server.repository_api.get_app_by_id.assert_called_once_with("app-123")
+        assert payload["metainfo"]["app_id"] == TEST_APP_ID
+        server.repository_api.get_app_by_id.assert_called_once_with(TEST_APP_ID)
+
+    @patch.dict("os.environ", {
+        "QLIK_SERVER_URL": "https://qlik.example.com",
+        "QLIK_USER_DIRECTORY": "DOMAIN",
+        "QLIK_USER_ID": "admin",
+        "QLIK_VERIFY_SSL": "false",
+        "QLIK_CLIENT_CERT_PATH": "",
+        "QLIK_CLIENT_KEY_PATH": "",
+        "QLIK_CA_CERT_PATH": "",
+    }, clear=False)
+    def test_resolve_app_id_passthrough_for_guid(self):
+        server = QlikSenseMCPServer()
+        server.repository_api.get_app_by_id = MagicMock()
+        server.repository_api.get_comprehensive_apps = MagicMock()
+
+        resolved = server._resolve_app_id(TEST_APP_ID)
+
+        assert resolved == TEST_APP_ID
+        server.repository_api.get_app_by_id.assert_not_called()
+        server.repository_api.get_comprehensive_apps.assert_not_called()
+
+    @patch.dict("os.environ", {
+        "QLIK_SERVER_URL": "https://qlik.example.com",
+        "QLIK_USER_DIRECTORY": "DOMAIN",
+        "QLIK_USER_ID": "admin",
+        "QLIK_VERIFY_SSL": "false",
+        "QLIK_CLIENT_CERT_PATH": "",
+        "QLIK_CLIENT_KEY_PATH": "",
+        "QLIK_CA_CERT_PATH": "",
+    }, clear=False)
+    def test_resolve_app_id_resolves_by_name(self):
+        server = QlikSenseMCPServer()
+        server.repository_api.get_app_by_id = MagicMock(return_value={"error": "not found"})
+        server.repository_api.get_comprehensive_apps = MagicMock(return_value={
+            "apps": [
+                {"guid": RESOLVED_APP_ID, "name": "Demo App"},
+                {"guid": TEST_APP_ID, "name": "Demo App Copy"},
+            ]
+        })
+
+        resolved = server._resolve_app_id("demo app")
+
+        assert resolved == RESOLVED_APP_ID
+        server.repository_api.get_comprehensive_apps.assert_called_once()
+
+    @patch.dict("os.environ", {
+        "QLIK_SERVER_URL": "https://qlik.example.com",
+        "QLIK_USER_DIRECTORY": "DOMAIN",
+        "QLIK_USER_ID": "admin",
+        "QLIK_VERIFY_SSL": "false",
+        "QLIK_CLIENT_CERT_PATH": "",
+        "QLIK_CLIENT_KEY_PATH": "",
+        "QLIK_CA_CERT_PATH": "",
+    }, clear=False)
+    def test_resolve_app_id_raises_if_not_found(self):
+        server = QlikSenseMCPServer()
+        server.repository_api.get_app_by_id = MagicMock(return_value={"error": "not found"})
+        server.repository_api.get_comprehensive_apps = MagicMock(return_value={"apps": []})
+
+        with pytest.raises(ValueError, match="App not found"):
+            server._resolve_app_id("Missing App")
 
     @pytest.mark.asyncio
     @patch.dict("os.environ", {
@@ -203,3 +269,148 @@ class TestQlikSenseMCPServer:
         server.repository_api.get_comprehensive_apps.assert_called_once()
         call_kwargs = server.repository_api.get_comprehensive_apps.call_args
         assert call_kwargs.kwargs.get("stream") == "my work" or call_kwargs.args[3] == "my work"
+
+    @pytest.mark.asyncio
+    @patch.dict("os.environ", {
+        "QLIK_SERVER_URL": "https://qlik.example.com",
+        "QLIK_USER_DIRECTORY": "DOMAIN",
+        "QLIK_USER_ID": "admin",
+        "QLIK_VERIFY_SSL": "false",
+        "QLIK_CLIENT_CERT_PATH": "",
+        "QLIK_CLIENT_KEY_PATH": "",
+        "QLIK_CA_CERT_PATH": "",
+    }, clear=False)
+    async def test_get_app_sheets_accepts_app_name(self):
+        server = QlikSenseMCPServer()
+        server.repository_api.get_app_by_id = MagicMock(return_value={"error": "not found"})
+        server.repository_api.get_comprehensive_apps = MagicMock(return_value={
+            "apps": [{"guid": RESOLVED_APP_ID, "name": "Demo App"}]
+        })
+        server.engine_api.connect = MagicMock()
+        server.engine_api.disconnect = MagicMock()
+        server.engine_api.open_doc_safe = MagicMock(return_value={"qReturn": {"qHandle": 321}})
+        server.engine_api.get_sheets = MagicMock(return_value=[
+            {"qInfo": {"qId": "sheet-1"}, "qMeta": {"title": "Overview", "description": "Main sheet"}}
+        ])
+
+        handler = server.server.request_handlers[CallToolRequest]
+        result = await handler(CallToolRequest(params={"name": "get_app_sheets", "arguments": {"app_id": "Demo App"}}))
+        payload = json.loads(result.root.content[0].text)
+
+        assert payload["app_id"] == RESOLVED_APP_ID
+        assert payload["total_sheets"] == 1
+        server.engine_api.open_doc_safe.assert_called_once_with(RESOLVED_APP_ID, no_data=True)
+
+    @pytest.mark.asyncio
+    @patch.dict("os.environ", {
+        "QLIK_SERVER_URL": "https://qlik.example.com",
+        "QLIK_USER_DIRECTORY": "DOMAIN",
+        "QLIK_USER_ID": "admin",
+        "QLIK_VERIFY_SSL": "false",
+        "QLIK_CLIENT_CERT_PATH": "",
+        "QLIK_CLIENT_KEY_PATH": "",
+        "QLIK_CA_CERT_PATH": "",
+    }, clear=False)
+    async def test_list_tools_includes_hidden_tools_now_public(self):
+        server = QlikSenseMCPServer()
+
+        handler = server.server.request_handlers[ListToolsRequest]
+        result = await handler(ListToolsRequest())
+        tools = {tool.name for tool in result.root.tools}
+
+        assert "engine_get_chart_data" in tools
+        assert "engine_export_visualization_to_csv" in tools
+        assert "get_app_reload_chain" in tools
+
+    @pytest.mark.asyncio
+    @patch.dict("os.environ", {
+        "QLIK_SERVER_URL": "https://qlik.example.com",
+        "QLIK_USER_DIRECTORY": "DOMAIN",
+        "QLIK_USER_ID": "admin",
+        "QLIK_VERIFY_SSL": "false",
+        "QLIK_CLIENT_CERT_PATH": "",
+        "QLIK_CLIENT_KEY_PATH": "",
+        "QLIK_CA_CERT_PATH": "",
+    }, clear=False)
+    async def test_get_visualization_image_returns_base64_payload(self):
+        server = QlikSenseMCPServer()
+        fake_bytes = b"\x89PNG\r\n\x1a\nFAKE"
+
+        server.engine_api.connect = MagicMock()
+        server.engine_api.disconnect = MagicMock()
+        server.engine_api.open_doc = MagicMock(return_value={"qReturn": {"qHandle": 777}})
+        server.engine_api.get_visualization_image_reference = MagicMock(return_value={
+            "object_id": "obj-1",
+            "object_type": "barchart",
+            "image_url": "/api/v1/fake/image.png",
+        })
+        server._download_binary_from_qlik = MagicMock(return_value={
+            "content": fake_bytes,
+            "content_type": "image/png",
+            "download_url": "https://qlik.example.com/api/v1/fake/image.png",
+        })
+
+        handler = server.server.request_handlers[CallToolRequest]
+        result = await handler(
+            CallToolRequest(
+                params={
+                    "name": "get_visualization_image",
+                    "arguments": {"app_id": TEST_APP_ID, "object_id": "obj-1", "format": "png"},
+                }
+            )
+        )
+        payload = json.loads(result.root.content[0].text)
+
+        assert payload["app_id"] == TEST_APP_ID
+        assert payload["object_id"] == "obj-1"
+        assert payload["format"] == "png"
+        assert payload["size_bytes"] == len(fake_bytes)
+        assert base64.b64decode(payload["base64_image"]) == fake_bytes
+
+    @pytest.mark.asyncio
+    @patch.dict("os.environ", {
+        "QLIK_SERVER_URL": "https://qlik.example.com",
+        "QLIK_USER_DIRECTORY": "DOMAIN",
+        "QLIK_USER_ID": "admin",
+        "QLIK_VERIFY_SSL": "false",
+        "QLIK_CLIENT_CERT_PATH": "",
+        "QLIK_CLIENT_KEY_PATH": "",
+        "QLIK_CA_CERT_PATH": "",
+    }, clear=False)
+    async def test_get_visualization_image_uses_headless_fallback_when_no_image_url(self):
+        server = QlikSenseMCPServer()
+        fake_bytes = b"\x89PNG\r\n\x1a\nFALLBACK"
+
+        server.engine_api.connect = MagicMock()
+        server.engine_api.disconnect = MagicMock()
+        server.engine_api.open_doc = MagicMock(return_value={"qReturn": {"qHandle": 777}})
+        server.engine_api.get_visualization_image_reference = MagicMock(return_value={
+            "error": "No image URL found for visualization",
+            "object_id": "obj-1",
+            "object_type": "linechart",
+        })
+        server._capture_visualization_image_headless = MagicMock(return_value={
+            "content": fake_bytes,
+            "content_type": "image/png",
+            "source_url": f"https://qlik.example.com/single/?appid={TEST_APP_ID}&obj=obj-1",
+        })
+
+        handler = server.server.request_handlers[CallToolRequest]
+        result = await handler(
+            CallToolRequest(
+                params={
+                    "name": "get_visualization_image",
+                    "arguments": {
+                        "app_id": TEST_APP_ID,
+                        "object_id": "obj-1",
+                        "headless_fallback": True,
+                    },
+                }
+            )
+        )
+        payload = json.loads(result.root.content[0].text)
+
+        assert payload["used_headless_fallback"] is True
+        assert payload["format"] == "png"
+        assert payload["size_bytes"] == len(fake_bytes)
+        assert base64.b64decode(payload["base64_image"]) == fake_bytes

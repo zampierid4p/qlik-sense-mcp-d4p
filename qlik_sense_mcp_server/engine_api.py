@@ -1384,6 +1384,69 @@ class QlikEngineAPI:
         result = self.send_request("ExportData", params, handle=app_handle)
         return result
 
+    def _extract_image_url(self, node: Any) -> Optional[str]:
+        """Recursively search an object for a candidate image URL."""
+        if isinstance(node, dict):
+            for key in ("qUrl", "url", "qStaticContentUrl", "thumbnail"):
+                value = node.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+
+            for value in node.values():
+                found = self._extract_image_url(value)
+                if found:
+                    return found
+
+        if isinstance(node, list):
+            for item in node:
+                found = self._extract_image_url(item)
+                if found:
+                    return found
+
+        return None
+
+    def get_visualization_image_reference(self, app_handle: int, object_id: str) -> Dict[str, Any]:
+        """Resolve a downloadable image URL for a visualization object.
+
+        This method tries object layout first and falls back to snapshot layout.
+        """
+        obj_result = self.send_request("GetObject", {"qId": object_id}, handle=app_handle)
+        obj_handle = obj_result.get("qReturn", {}).get("qHandle", -1)
+        if obj_handle == -1:
+            return {
+                "error": "Object not found",
+                "object_id": object_id,
+            }
+
+        layout_result = self.send_request("GetLayout", [], handle=obj_handle)
+        layout = layout_result.get("qLayout", {}) if isinstance(layout_result, dict) else {}
+        image_url = self._extract_image_url(layout)
+
+        if not image_url:
+            try:
+                snapshot_result = self.send_request("GetSnapshotObject", [], handle=obj_handle)
+                snapshot_handle = snapshot_result.get("qReturn", {}).get("qHandle", -1)
+                if snapshot_handle != -1:
+                    snapshot_layout_result = self.send_request("GetLayout", [], handle=snapshot_handle)
+                    snapshot_layout = snapshot_layout_result.get("qLayout", {}) if isinstance(snapshot_layout_result, dict) else {}
+                    image_url = self._extract_image_url(snapshot_layout)
+            except Exception:
+                # Snapshot is optional: if unavailable we return a clear error below.
+                image_url = None
+
+        if not image_url:
+            return {
+                "error": "No image URL found for visualization",
+                "object_id": object_id,
+                "object_type": layout.get("qInfo", {}).get("qType", ""),
+            }
+
+        return {
+            "object_id": object_id,
+            "object_type": layout.get("qInfo", {}).get("qType", ""),
+            "image_url": image_url,
+        }
+
     def search_objects(
         self, app_handle: int, search_terms: List[str], object_types: List[str] = None
     ) -> List[Dict[str, Any]]:
@@ -1472,7 +1535,7 @@ class QlikEngineAPI:
                         "qTop": 0,
                         "qLeft": 0,
                         "qHeight": max_rows,
-                        "qWidth": len(converted_dimensions) + len(converted_measures),
+                        "qWidth": len(dimensions) + len(measures),
                     }
                 ],
                 "qSuppressZero": True,

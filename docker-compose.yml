@@ -16,6 +16,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        INSTALL_PLAYWRIGHT: "${INSTALL_PLAYWRIGHT:-false}"
     # MCP usa stdio: stdin deve essere aperto
     stdin_open: true
     tty: false
