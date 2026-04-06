@@ -655,8 +655,8 @@ class QlikSenseMCPServer:
                         "type": "object",
                         "properties": {
                             "app_id": {"type": "string", "description": "Application GUID or application name"},
-                            "dimensions": {"type": "array", "description": "Dimension definitions", "default": []},
-                            "measures": {"type": "array", "description": "Measure definitions", "default": []},
+                            "dimensions": {"type": "array", "items": {"type": "object"}, "description": "Dimension definitions", "default": []},
+                            "measures": {"type": "array", "items": {"type": "object"}, "description": "Measure definitions", "default": []},
                             "max_rows": {"type": "integer", "description": "Maximum rows to return", "default": DEFAULT_HYPERCUBE_MAX_ROWS}
                         },
                         "required": ["app_id"]
@@ -740,8 +740,8 @@ class QlikSenseMCPServer:
                         "type": "object",
                         "properties": {
                             "app_id": {"type": "string", "description": "Application GUID or application name"},
-                            "dimensions": {"type": "array", "description": "Dimension definitions", "default": []},
-                            "measures": {"type": "array", "description": "Measure definitions", "default": []},
+                            "dimensions": {"type": "array", "items": {"type": "object"}, "description": "Dimension definitions", "default": []},
+                            "measures": {"type": "array", "items": {"type": "object"}, "description": "Measure definitions", "default": []},
                             "max_rows": {"type": "integer", "description": "Maximum rows to return", "default": DEFAULT_HYPERCUBE_MAX_ROWS}
                         },
                         "required": ["app_id"]
@@ -754,8 +754,8 @@ class QlikSenseMCPServer:
                         "type": "object",
                         "properties": {
                             "app_id": {"type": "string", "description": "Application GUID or application name"},
-                            "dimensions": {"type": "array", "description": "Dimension definitions"},
-                            "measures": {"type": "array", "description": "Measure definitions", "default": []},
+                            "dimensions": {"type": "array", "items": {"type": "object"}, "description": "Dimension definitions"},
+                            "measures": {"type": "array", "items": {"type": "object"}, "description": "Measure definitions", "default": []},
                             "max_rows": {"type": "integer", "description": "Maximum rows to return", "default": DEFAULT_HYPERCUBE_MAX_ROWS}
                         },
                         "required": ["app_id", "dimensions"]
@@ -769,8 +769,8 @@ class QlikSenseMCPServer:
                         "properties": {
                             "app_id": {"type": "string", "description": "Application GUID or application name"},
                             "chart_type": {"type": "string", "description": "Chart type to generate"},
-                            "dimensions": {"type": "array", "description": "Dimension definitions", "default": []},
-                            "measures": {"type": "array", "description": "Measure definitions", "default": []},
+                            "dimensions": {"type": "array", "items": {"type": "object"}, "description": "Dimension definitions", "default": []},
+                            "measures": {"type": "array", "items": {"type": "object"}, "description": "Measure definitions", "default": []},
                             "max_rows": {"type": "integer", "description": "Maximum rows to return", "default": DEFAULT_HYPERCUBE_MAX_ROWS}
                         },
                         "required": ["app_id", "chart_type"]
