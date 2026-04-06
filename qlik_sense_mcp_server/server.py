@@ -778,13 +778,53 @@ class QlikSenseMCPServer:
                 ),
                 Tool(
                     name="engine_export_visualization_to_csv",
-                    description="Export a visualization object to a CSV file on the server filesystem.",
+                    description="Export visualization data to CSV via GenericObject ExportData and return download URL.",
                     inputSchema={
                         "type": "object",
                         "properties": {
                             "app_id": {"type": "string", "description": "Application GUID or application name"},
                             "object_id": {"type": "string", "description": "Visualization object ID"},
-                            "file_path": {"type": "string", "description": "Destination CSV path", "default": "/tmp/export.csv"}
+                            "q_path": {"type": "string", "description": "Path to object definition for CSV export (default: /qHyperCubeDef)", "default": "/qHyperCubeDef"},
+                            "q_export_state": {"type": "string", "description": "Export state: A (all) or P (possible)", "default": "A"},
+                            "q_serve_once": {"type": "boolean", "description": "Serve export URL only once", "default": False}
+                        },
+                        "required": ["app_id", "object_id"]
+                    }
+                ),
+                Tool(
+                    name="engine_export_visualization_to_xlsx",
+                    description="Export visualization data to XLSX (OOXML) via GenericObject ExportData.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "app_id": {"type": "string", "description": "Application GUID or application name"},
+                            "object_id": {"type": "string", "description": "Visualization object ID"},
+                            "q_export_state": {"type": "string", "description": "Export state: A (all) or P (possible)", "default": "A"},
+                            "q_serve_once": {"type": "boolean", "description": "Serve export URL only once", "default": False}
+                        },
+                        "required": ["app_id", "object_id"]
+                    }
+                ),
+                Tool(
+                    name="engine_export_visualization_to_pdf",
+                    description="Export visualization to PDF via GenericObject ExportPdf.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "app_id": {"type": "string", "description": "Application GUID or application name"},
+                            "object_id": {"type": "string", "description": "Visualization object ID"}
+                        },
+                        "required": ["app_id", "object_id"]
+                    }
+                ),
+                Tool(
+                    name="engine_export_visualization_to_image",
+                    description="Export visualization to image via GenericObject ExportImg.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "app_id": {"type": "string", "description": "Application GUID or application name"},
+                            "object_id": {"type": "string", "description": "Visualization object ID"}
                         },
                         "required": ["app_id", "object_id"]
                     }
@@ -1660,23 +1700,121 @@ class QlikSenseMCPServer:
                 elif name == "engine_export_visualization_to_csv":
                     app_id = self._resolve_app_id(arguments["app_id"])
                     object_id = arguments["object_id"]
-                    file_path = arguments.get("file_path", "/tmp/export.csv")
+                    q_path = arguments.get("q_path", "/qHyperCubeDef")
+                    q_export_state = str(arguments.get("q_export_state", "A"))
+                    q_serve_once = bool(arguments.get("q_serve_once", False))
 
-                    def _export_visualization():
+                    def _export_visualization_csv():
                         try:
                             self.engine_api.connect()
                             app_result = self.engine_api.open_doc(app_id, no_data=False)
                             app_handle = app_result.get("qReturn", {}).get("qHandle", -1)
                             if app_handle != -1:
-                                return self.engine_api.export_visualization_to_csv(app_handle, object_id, file_path)
-                            else:
-                                raise Exception("Failed to open app")
+                                result = self.engine_api.export_visualization_to_csv(
+                                    app_handle,
+                                    object_id,
+                                    q_path=q_path,
+                                    q_export_state=q_export_state,
+                                    q_serve_once=q_serve_once,
+                                )
+                                return {
+                                    "app_id": app_id,
+                                    "object_id": object_id,
+                                    "format": "csv",
+                                    **(result if isinstance(result, dict) else {"result": result}),
+                                }
+                            raise Exception("Failed to open app")
                         except Exception as e:
-                            return _make_error(str(e))
+                            return _make_error(str(e), app_id=app_id, object_id=object_id)
                         finally:
                             self.engine_api.disconnect()
 
-                    result = await asyncio.to_thread(_export_visualization)
+                    result = await asyncio.to_thread(_export_visualization_csv)
+                    return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+
+                elif name == "engine_export_visualization_to_xlsx":
+                    app_id = self._resolve_app_id(arguments["app_id"])
+                    object_id = arguments["object_id"]
+                    q_export_state = str(arguments.get("q_export_state", "A"))
+                    q_serve_once = bool(arguments.get("q_serve_once", False))
+
+                    def _export_visualization_xlsx():
+                        try:
+                            self.engine_api.connect()
+                            app_result = self.engine_api.open_doc(app_id, no_data=False)
+                            app_handle = app_result.get("qReturn", {}).get("qHandle", -1)
+                            if app_handle != -1:
+                                result = self.engine_api.export_visualization_to_xlsx(
+                                    app_handle,
+                                    object_id,
+                                    q_export_state=q_export_state,
+                                    q_serve_once=q_serve_once,
+                                )
+                                return {
+                                    "app_id": app_id,
+                                    "object_id": object_id,
+                                    "format": "xlsx",
+                                    **(result if isinstance(result, dict) else {"result": result}),
+                                }
+                            raise Exception("Failed to open app")
+                        except Exception as e:
+                            return _make_error(str(e), app_id=app_id, object_id=object_id)
+                        finally:
+                            self.engine_api.disconnect()
+
+                    result = await asyncio.to_thread(_export_visualization_xlsx)
+                    return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+
+                elif name == "engine_export_visualization_to_pdf":
+                    app_id = self._resolve_app_id(arguments["app_id"])
+                    object_id = arguments["object_id"]
+
+                    def _export_visualization_pdf():
+                        try:
+                            self.engine_api.connect()
+                            app_result = self.engine_api.open_doc(app_id, no_data=False)
+                            app_handle = app_result.get("qReturn", {}).get("qHandle", -1)
+                            if app_handle != -1:
+                                result = self.engine_api.export_visualization_to_pdf(app_handle, object_id)
+                                return {
+                                    "app_id": app_id,
+                                    "object_id": object_id,
+                                    "format": "pdf",
+                                    **(result if isinstance(result, dict) else {"result": result}),
+                                }
+                            raise Exception("Failed to open app")
+                        except Exception as e:
+                            return _make_error(str(e), app_id=app_id, object_id=object_id)
+                        finally:
+                            self.engine_api.disconnect()
+
+                    result = await asyncio.to_thread(_export_visualization_pdf)
+                    return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+
+                elif name == "engine_export_visualization_to_image":
+                    app_id = self._resolve_app_id(arguments["app_id"])
+                    object_id = arguments["object_id"]
+
+                    def _export_visualization_image():
+                        try:
+                            self.engine_api.connect()
+                            app_result = self.engine_api.open_doc(app_id, no_data=False)
+                            app_handle = app_result.get("qReturn", {}).get("qHandle", -1)
+                            if app_handle != -1:
+                                result = self.engine_api.export_visualization_to_image(app_handle, object_id)
+                                return {
+                                    "app_id": app_id,
+                                    "object_id": object_id,
+                                    "format": "image",
+                                    **(result if isinstance(result, dict) else {"result": result}),
+                                }
+                            raise Exception("Failed to open app")
+                        except Exception as e:
+                            return _make_error(str(e), app_id=app_id, object_id=object_id)
+                        finally:
+                            self.engine_api.disconnect()
+
+                    result = await asyncio.to_thread(_export_visualization_image)
                     return [
                         TextContent(
                             type="text",
@@ -1920,9 +2058,9 @@ EXAMPLES:
 
 AVAILABLE TOOLS:
     Repository API: get_apps, get_app_details, get_app_reload_chain, get_app_objects_detailed
-    Engine API: get_app_sheets, get_app_sheet_objects, get_app_script, get_app_field, get_app_variables, get_app_field_statistics, engine_create_hypercube, get_app_object, get_visualization_image, engine_get_field_info, engine_extract_data, engine_get_visualization_data, engine_search_and_analyze, engine_get_master_items, engine_calculate_expression, engine_get_associations, engine_smart_search, engine_create_pivot_analysis, engine_create_simple_table, engine_get_chart_data, engine_export_visualization_to_csv
+    Engine API: get_app_sheets, get_app_sheet_objects, get_app_script, get_app_field, get_app_variables, get_app_field_statistics, engine_create_hypercube, get_app_object, get_visualization_image, engine_get_field_info, engine_extract_data, engine_get_visualization_data, engine_search_and_analyze, engine_get_master_items, engine_calculate_expression, engine_get_associations, engine_smart_search, engine_create_pivot_analysis, engine_create_simple_table, engine_get_chart_data, engine_export_visualization_to_csv, engine_export_visualization_to_xlsx, engine_export_visualization_to_pdf, engine_export_visualization_to_image
 
-    Total: 25 tools for Qlik Sense analytics operations
+    Total: 28 tools for Qlik Sense analytics operations
 
 MORE INFO:
     GitHub: https://github.com/data4prime/qlik-sense-mcp-d4p

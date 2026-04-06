@@ -321,6 +321,9 @@ class TestQlikSenseMCPServer:
 
         assert "engine_get_chart_data" in tools
         assert "engine_export_visualization_to_csv" in tools
+        assert "engine_export_visualization_to_xlsx" in tools
+        assert "engine_export_visualization_to_pdf" in tools
+        assert "engine_export_visualization_to_image" in tools
         assert "get_app_reload_chain" in tools
 
         get_apps_schema = tool_map["get_apps"].inputSchema
@@ -419,3 +422,104 @@ class TestQlikSenseMCPServer:
         assert payload["format"] == "png"
         assert payload["size_bytes"] == len(fake_bytes)
         assert base64.b64decode(payload["base64_image"]) == fake_bytes
+
+    @pytest.mark.asyncio
+    @patch.dict("os.environ", {
+        "QLIK_SERVER_URL": "https://qlik.example.com",
+        "QLIK_USER_DIRECTORY": "DOMAIN",
+        "QLIK_USER_ID": "admin",
+        "QLIK_VERIFY_SSL": "false",
+        "QLIK_CLIENT_CERT_PATH": "",
+        "QLIK_CLIENT_KEY_PATH": "",
+        "QLIK_CA_CERT_PATH": "",
+    }, clear=False)
+    async def test_engine_export_visualization_to_csv_uses_exportdata_contract(self):
+        server = QlikSenseMCPServer()
+        server.engine_api.connect = MagicMock()
+        server.engine_api.disconnect = MagicMock()
+        server.engine_api.open_doc = MagicMock(return_value={"qReturn": {"qHandle": 777}})
+        server.engine_api.export_visualization_to_csv = MagicMock(return_value={"qUrl": "/temp/export.csv", "qWarnings": []})
+
+        handler = server.server.request_handlers[CallToolRequest]
+        result = await handler(
+            CallToolRequest(
+                params={
+                    "name": "engine_export_visualization_to_csv",
+                    "arguments": {
+                        "app_id": TEST_APP_ID,
+                        "object_id": "obj-1",
+                        "q_path": "/qHyperCubeDef",
+                        "q_export_state": "A",
+                        "q_serve_once": False,
+                    },
+                }
+            )
+        )
+        payload = json.loads(result.root.content[0].text)
+
+        assert payload["format"] == "csv"
+        assert payload["qUrl"] == "/temp/export.csv"
+        server.engine_api.export_visualization_to_csv.assert_called_once_with(
+            777,
+            "obj-1",
+            q_path="/qHyperCubeDef",
+            q_export_state="A",
+            q_serve_once=False,
+        )
+
+    @pytest.mark.asyncio
+    @patch.dict("os.environ", {
+        "QLIK_SERVER_URL": "https://qlik.example.com",
+        "QLIK_USER_DIRECTORY": "DOMAIN",
+        "QLIK_USER_ID": "admin",
+        "QLIK_VERIFY_SSL": "false",
+        "QLIK_CLIENT_CERT_PATH": "",
+        "QLIK_CLIENT_KEY_PATH": "",
+        "QLIK_CA_CERT_PATH": "",
+    }, clear=False)
+    async def test_engine_export_visualization_to_xlsx_pdf_image(self):
+        server = QlikSenseMCPServer()
+        server.engine_api.connect = MagicMock()
+        server.engine_api.disconnect = MagicMock()
+        server.engine_api.open_doc = MagicMock(return_value={"qReturn": {"qHandle": 777}})
+        server.engine_api.export_visualization_to_xlsx = MagicMock(return_value={"qUrl": "/temp/export.xlsx"})
+        server.engine_api.export_visualization_to_pdf = MagicMock(return_value={"qUrl": "/temp/export.pdf"})
+        server.engine_api.export_visualization_to_image = MagicMock(return_value={"qUrl": "/temp/export.png"})
+
+        handler = server.server.request_handlers[CallToolRequest]
+
+        xlsx_res = await handler(
+            CallToolRequest(
+                params={
+                    "name": "engine_export_visualization_to_xlsx",
+                    "arguments": {"app_id": TEST_APP_ID, "object_id": "obj-1"},
+                }
+            )
+        )
+        xlsx_payload = json.loads(xlsx_res.root.content[0].text)
+        assert xlsx_payload["format"] == "xlsx"
+        assert xlsx_payload["qUrl"] == "/temp/export.xlsx"
+
+        pdf_res = await handler(
+            CallToolRequest(
+                params={
+                    "name": "engine_export_visualization_to_pdf",
+                    "arguments": {"app_id": TEST_APP_ID, "object_id": "obj-1"},
+                }
+            )
+        )
+        pdf_payload = json.loads(pdf_res.root.content[0].text)
+        assert pdf_payload["format"] == "pdf"
+        assert pdf_payload["qUrl"] == "/temp/export.pdf"
+
+        img_res = await handler(
+            CallToolRequest(
+                params={
+                    "name": "engine_export_visualization_to_image",
+                    "arguments": {"app_id": TEST_APP_ID, "object_id": "obj-1"},
+                }
+            )
+        )
+        img_payload = json.loads(img_res.root.content[0].text)
+        assert img_payload["format"] == "image"
+        assert img_payload["qUrl"] == "/temp/export.png"

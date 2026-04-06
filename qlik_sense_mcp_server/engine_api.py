@@ -1372,17 +1372,100 @@ class QlikEngineAPI:
             return layout
         return {}
 
-    def export_data_to_csv(
-        self, app_handle: int, object_id: str, file_path: str = "/tmp/export.csv"
+    def _get_visualization_object_handle(self, app_handle: int, object_id: str) -> int:
+        """Resolve and return a visualization object handle from an app handle."""
+        obj_result = self.send_request("GetObject", {"qId": object_id}, handle=app_handle)
+        obj_handle = obj_result.get("qReturn", {}).get("qHandle", -1)
+        if obj_handle == -1:
+            raise Exception(f"Object not found: {object_id}")
+        return obj_handle
+
+    def export_visualization_data(
+        self,
+        app_handle: int,
+        object_id: str,
+        q_file_type: str,
+        q_path: str = "/qHyperCubeDef",
+        q_export_state: str = "A",
+        q_serve_once: bool = False,
     ) -> Dict[str, Any]:
-        """Export object data to CSV."""
-        params = {
-            "qObjectId": object_id,
-            "qPath": file_path,
-            "qExportState": "A",  # All data
+        """Export visualization data through GenericObject ExportData."""
+        obj_handle = self._get_visualization_object_handle(app_handle, object_id)
+        params: Dict[str, Any] = {
+            "qFileType": q_file_type,
+            "qExportState": q_export_state,
+            "qServeOnce": q_serve_once,
         }
-        result = self.send_request("ExportData", params, handle=app_handle)
+
+        # qPath is mandatory for CSV formats in ExportData.
+        if q_file_type in ("CSV_C", "EXPORT_CSV_C", "CSV_T", "EXPORT_CSV_T"):
+            params["qPath"] = q_path
+
+        try:
+            result = self.send_request("ExportData", params, handle=obj_handle)
+        except Exception as exc:
+            raise Exception(f"ExportData failed for object {object_id}: {exc}") from exc
         return result
+
+    def export_visualization_to_csv(
+        self,
+        app_handle: int,
+        object_id: str,
+        q_path: str = "/qHyperCubeDef",
+        q_export_state: str = "A",
+        q_serve_once: bool = False,
+    ) -> Dict[str, Any]:
+        """Export visualization data to CSV using GenericObject ExportData."""
+        return self.export_visualization_data(
+            app_handle=app_handle,
+            object_id=object_id,
+            q_file_type="CSV_C",
+            q_path=q_path,
+            q_export_state=q_export_state,
+            q_serve_once=q_serve_once,
+        )
+
+    def export_visualization_to_xlsx(
+        self,
+        app_handle: int,
+        object_id: str,
+        q_export_state: str = "A",
+        q_serve_once: bool = False,
+    ) -> Dict[str, Any]:
+        """Export visualization data to XLSX (OOXML) using GenericObject ExportData."""
+        return self.export_visualization_data(
+            app_handle=app_handle,
+            object_id=object_id,
+            q_file_type="OOXML",
+            q_export_state=q_export_state,
+            q_serve_once=q_serve_once,
+        )
+
+    def export_visualization_to_pdf(self, app_handle: int, object_id: str) -> Dict[str, Any]:
+        """Export visualization to PDF using GenericObject ExportPdf."""
+        obj_handle = self._get_visualization_object_handle(app_handle, object_id)
+        try:
+            return self.send_request("ExportPdf", {}, handle=obj_handle)
+        except Exception as exc:
+            raise Exception(f"ExportPdf failed for object {object_id}: {exc}") from exc
+
+    def export_visualization_to_image(self, app_handle: int, object_id: str) -> Dict[str, Any]:
+        """Export visualization to image using GenericObject ExportImg."""
+        obj_handle = self._get_visualization_object_handle(app_handle, object_id)
+        try:
+            return self.send_request("ExportImg", {}, handle=obj_handle)
+        except Exception as exc:
+            raise Exception(f"ExportImg failed for object {object_id}: {exc}") from exc
+
+    def export_data_to_csv(
+        self, app_handle: int, object_id: str, file_path: str = "/qHyperCubeDef"
+    ) -> Dict[str, Any]:
+        """Backward-compatible alias for CSV export."""
+        return self.export_visualization_to_csv(
+            app_handle=app_handle,
+            object_id=object_id,
+            q_path=file_path or "/qHyperCubeDef",
+        )
 
     def _extract_image_url(self, node: Any) -> Optional[str]:
         """Recursively search an object for a candidate image URL."""
