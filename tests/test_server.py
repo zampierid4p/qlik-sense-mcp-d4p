@@ -317,10 +317,15 @@ class TestQlikSenseMCPServer:
         handler = server.server.request_handlers[ListToolsRequest]
         result = await handler(ListToolsRequest())
         tools = {tool.name for tool in result.root.tools}
+        tool_map = {tool.name: tool for tool in result.root.tools}
 
         assert "engine_get_chart_data" in tools
         assert "engine_export_visualization_to_csv" in tools
         assert "get_app_reload_chain" in tools
+
+        get_apps_schema = tool_map["get_apps"].inputSchema
+        assert get_apps_schema["properties"]["published"]["type"] == "boolean"
+        assert get_apps_schema["properties"]["published"]["default"] is True
 
     @pytest.mark.asyncio
     @patch.dict("os.environ", {

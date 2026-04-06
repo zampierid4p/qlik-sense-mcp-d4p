@@ -449,9 +449,9 @@ class QlikSenseMCPServer:
                                 "description": "Wildcard case-insensitive search in stream name. Use 'My Work' to list personal unpublished apps."
                             },
                             "published": {
-                                "type": "string",
-                                "description": "Filter by published status (true/false or 1/0). Default: true. Ignored when stream='My Work'.",
-                                "default": "true"
+                                "type": "boolean",
+                                "description": "Filter by published status. Default: true. Ignored when stream='My Work'.",
+                                "default": True
                             }
                         }
                     }
