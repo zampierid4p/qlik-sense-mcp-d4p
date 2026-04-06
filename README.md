@@ -54,6 +54,10 @@ Qlik Sense MCP Server bridges Qlik Sense Enterprise with systems supporting Mode
 | `engine_create_hypercube` | Create hypercube for data analysis | Engine | ✅ |
 | `get_app_object` | Get specific object layout by ID (GetObject + GetLayout) | Engine | ✅ |
 | `get_visualization_image` | Return visualization image as base64 (Engine URL first, optional headless fallback) | Engine | ✅ |
+| `engine_export_visualization_to_csv` | Export visualization data to CSV and return Qlik temporary download URL | Engine | ✅ |
+| `engine_export_visualization_to_xlsx` | Export visualization data to XLSX and return Qlik temporary download URL | Engine | ✅ |
+| `engine_export_visualization_to_pdf` | Export visualization to PDF when supported by Engine, otherwise return a structured fallback error or warning | Engine | ✅ |
+| `engine_export_visualization_to_image` | Export visualization to image when supported by Engine, otherwise try layout-based image URL fallback | Engine | ✅ |
 
 ## Installation
 
@@ -570,11 +574,11 @@ QLIK_CA_CERT_PATH=/certs/root.pem
 ```bash
 docker build -t qlik-sense-mcp-server .
 
-# Optional: include Chromium runtime for headless fallback in get_visualization_image
+# Optional: include Chromium runtime for browser-based fallbacks
 docker build --build-arg INSTALL_PLAYWRIGHT=true -t qlik-sense-mcp-server:playwright .
 ```
 
-If you enable the headless fallback path, the runtime also needs Playwright browser binaries.
+If you enable browser-based fallback paths, the runtime also needs Playwright browser binaries.
 You can provide a custom browser path with `HEADLESS_BROWSER_EXECUTABLE`.
 
 ### 3. Run in Stdio Mode
@@ -1132,6 +1136,57 @@ Returns a visualization image as base64. The tool first tries Engine API layout/
   "base64_image": "iVBORw0KGgoAAAANSUhEUgAA..."
 }
 ```
+
+### engine_export_visualization_to_csv
+Exports visualization data through GenericObject `ExportData` and returns the temporary Qlik download URL.
+
+**Parameters:**
+- `app_id` (required): Application identifier or application name
+- `object_id` (required): Visualization object identifier
+- `q_path` (optional): Export path for the object definition, default `/qHyperCubeDef`
+- `q_export_state` (optional): Export state, usually `A` or `P`
+- `q_serve_once` (optional): If `true`, the generated URL is single-use
+
+**Returns:** Export metadata including `qUrl`
+
+### engine_export_visualization_to_xlsx
+Exports visualization data to XLSX through GenericObject `ExportData` and returns the temporary Qlik download URL.
+
+**Parameters:**
+- `app_id` (required): Application identifier or application name
+- `object_id` (required): Visualization object identifier
+- `q_export_state` (optional): Export state, usually `A` or `P`
+- `q_serve_once` (optional): If `true`, the generated URL is single-use
+
+**Returns:** Export metadata including `qUrl`
+
+### engine_export_visualization_to_pdf
+Exports visualization to PDF through GenericObject `ExportPdf` when supported by the target Engine version.
+
+**Parameters:**
+- `app_id` (required): Application identifier or application name
+- `object_id` (required): Visualization object identifier
+- `headless_fallback` (optional): If `true`, return a browser-rendered base64 PDF when native Engine export does not provide `qUrl`
+
+**Returns:** Export metadata including `qUrl` when supported, or a base64 PDF payload when browser fallback is requested and succeeds.
+
+**Compatibility note:**
+- Some Qlik Sense environments do not expose `ExportPdf` and return `Method not found`
+- In that case the server can return a browser-rendered `base64_pdf` payload if `headless_fallback=true` and Playwright browser runtime is available
+
+### engine_export_visualization_to_image
+Exports visualization to image through GenericObject `ExportImg` when supported by the target Engine version.
+
+**Parameters:**
+- `app_id` (required): Application identifier or application name
+- `object_id` (required): Visualization object identifier
+- `headless_fallback` (optional): If `true`, return a browser-rendered base64 image when native Engine export does not provide `qUrl`
+
+**Returns:** Export metadata including `qUrl` when supported, or a base64 image payload when browser fallback is requested and succeeds.
+
+**Compatibility note:**
+- Some Qlik Sense environments do not expose `ExportImg` and return `Method not found`
+- In that case the server first tries layout-based image URL resolution and can then fall back to browser rendering if `headless_fallback=true`
 
 ### get_app_script
 Retrieves load script from application.

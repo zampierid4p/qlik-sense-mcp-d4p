@@ -129,7 +129,7 @@ make docker-build
 # Or build manually with a fixed local tag
 docker build -t qlik-sense-mcp-server .
 
-# Optional: include Chromium for headless fallback in get_visualization_image
+# Optional: include Chromium for browser-based fallbacks
 docker build --build-arg INSTALL_PLAYWRIGHT=true -t qlik-sense-mcp-server:playwright .
 
 # Run stdio container
@@ -168,10 +168,18 @@ make remote-logs
 make remote-down
 ```
 
-Headless fallback for `get_visualization_image`:
+Browser-based fallback notes:
 - Default flow is API-first (no browser required)
-- Enable fallback with tool argument `headless_fallback=true`
+- `get_visualization_image` supports browser fallback with tool argument `headless_fallback=true`
+- `engine_export_visualization_to_pdf` supports `headless_fallback=true` and can return `base64_pdf` when native Engine export is unavailable
+- `engine_export_visualization_to_image` supports `headless_fallback=true` and can return `base64_image` when native Engine export is unavailable
 - Browser runtime knobs in `.env`: `HEADLESS_SCREENSHOT_TIMEOUT`, `HEADLESS_VIEWPORT_WIDTH`, `HEADLESS_VIEWPORT_HEIGHT`, `HEADLESS_BROWSER_EXECUTABLE`
+
+Export tool notes:
+- `engine_export_visualization_to_csv` uses GenericObject `ExportData` with `q_path` defaulting to `/qHyperCubeDef`
+- `engine_export_visualization_to_xlsx` uses GenericObject `ExportData` with file type `OOXML`
+- `engine_export_visualization_to_pdf` uses native `ExportPdf` when available, otherwise optional browser fallback returns `base64_pdf`
+- `engine_export_visualization_to_image` uses native `ExportImg` when available, otherwise tries layout URL resolution and then optional browser fallback returns `base64_image`
 
 Notes:
 - `docker-compose.yml` is for stdio transport and does not publish a host port

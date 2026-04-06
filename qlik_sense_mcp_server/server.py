@@ -333,6 +333,86 @@ class QlikSenseMCPServer:
                 if browser:
                     browser.close()
 
+    def _capture_visualization_pdf_headless(self, app_id: str, object_id: str) -> Dict[str, Any]:
+        """Capture a visualization as PDF through Playwright as best-effort fallback."""
+        try:
+            import importlib
+
+            sync_api = importlib.import_module("playwright.sync_api")
+            sync_playwright = getattr(sync_api, "sync_playwright")
+            PlaywrightTimeoutError = getattr(sync_api, "TimeoutError")
+        except Exception as exc:
+            return _make_error(
+                "Headless fallback unavailable: install playwright and browser binaries",
+                details=str(exc),
+            )
+
+        timeout_seconds = int(os.getenv("HEADLESS_SCREENSHOT_TIMEOUT", "30"))
+        timeout_ms = max(timeout_seconds, 5) * 1000
+        viewport_width = int(os.getenv("HEADLESS_VIEWPORT_WIDTH", "1920"))
+        viewport_height = int(os.getenv("HEADLESS_VIEWPORT_HEIGHT", "1080"))
+        executable_path = os.getenv("HEADLESS_BROWSER_EXECUTABLE") or None
+        user_directory = self.config.user_directory
+        user_id = self.config.user_id
+        target_url = f"{self.config.server_url.rstrip('/')}/single/?appid={app_id}&obj={object_id}"
+
+        with sync_playwright() as playwright:
+            browser = None
+            context = None
+            try:
+                launch_options: Dict[str, Any] = {
+                    "headless": True,
+                }
+                if executable_path:
+                    launch_options["executable_path"] = executable_path
+
+                browser = playwright.chromium.launch(**launch_options)
+                context = browser.new_context(
+                    viewport={"width": viewport_width, "height": viewport_height},
+                    ignore_https_errors=not self.config.verify_ssl,
+                    extra_http_headers={
+                        "X-Qlik-User": f"UserDirectory={user_directory}; UserId={user_id}"
+                    },
+                )
+
+                page = context.new_page()
+                page.goto(target_url, wait_until="domcontentloaded", timeout=timeout_ms)
+
+                preferred_selectors = [
+                    f"[data-qvid='{object_id}']",
+                    f"#{object_id}",
+                    "svg",
+                    "canvas",
+                ]
+                for selector in preferred_selectors:
+                    try:
+                        locator = page.locator(selector).first
+                        locator.wait_for(state="visible", timeout=3000)
+                        break
+                    except Exception:
+                        continue
+
+                pdf_bytes = page.pdf(print_background=True)
+                return {
+                    "format": "pdf",
+                    "content_type": "application/pdf",
+                    "content": pdf_bytes,
+                    "capture_mode": "headless",
+                    "source_url": target_url,
+                }
+            except PlaywrightTimeoutError:
+                return _make_error(
+                    "Headless fallback timeout while rendering visualization",
+                    app_id=app_id,
+                    object_id=object_id,
+                    timeout_seconds=timeout_seconds,
+                )
+            finally:
+                if context:
+                    context.close()
+                if browser:
+                    browser.close()
+
     def _filter_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
         """Filter metadata to remove system fields and hidden items."""
         # Fields to remove from output
@@ -812,7 +892,8 @@ class QlikSenseMCPServer:
                         "type": "object",
                         "properties": {
                             "app_id": {"type": "string", "description": "Application GUID or application name"},
-                            "object_id": {"type": "string", "description": "Visualization object ID"}
+                            "object_id": {"type": "string", "description": "Visualization object ID"},
+                            "headless_fallback": {"type": "boolean", "description": "If true, use a browser-rendered base64 PDF when native Engine export does not provide qUrl.", "default": False}
                         },
                         "required": ["app_id", "object_id"]
                     }
@@ -824,7 +905,8 @@ class QlikSenseMCPServer:
                         "type": "object",
                         "properties": {
                             "app_id": {"type": "string", "description": "Application GUID or application name"},
-                            "object_id": {"type": "string", "description": "Visualization object ID"}
+                            "object_id": {"type": "string", "description": "Visualization object ID"},
+                            "headless_fallback": {"type": "boolean", "description": "If true, use a browser-rendered base64 image when native Engine export does not provide qUrl.", "default": False}
                         },
                         "required": ["app_id", "object_id"]
                     }
@@ -1768,6 +1850,7 @@ class QlikSenseMCPServer:
                 elif name == "engine_export_visualization_to_pdf":
                     app_id = self._resolve_app_id(arguments["app_id"])
                     object_id = arguments["object_id"]
+                    headless_fallback = bool(arguments.get("headless_fallback", False))
 
                     def _export_visualization_pdf():
                         try:
@@ -1776,6 +1859,34 @@ class QlikSenseMCPServer:
                             app_handle = app_result.get("qReturn", {}).get("qHandle", -1)
                             if app_handle != -1:
                                 result = self.engine_api.export_visualization_to_pdf(app_handle, object_id)
+                                if (
+                                    isinstance(result, dict)
+                                    and "qUrl" not in result
+                                    and "error" in result
+                                    and headless_fallback
+                                ):
+                                    headless_result = self._capture_visualization_pdf_headless(app_id, object_id)
+                                    if "error" in headless_result:
+                                        return _make_error(
+                                            result["error"],
+                                            app_id=app_id,
+                                            object_id=object_id,
+                                            headless_error=headless_result.get("error"),
+                                            headless_details=headless_result.get("details", ""),
+                                        )
+                                    content = headless_result.get("content", b"")
+                                    return {
+                                        "app_id": app_id,
+                                        "object_id": object_id,
+                                        "format": "pdf",
+                                        "used_headless_fallback": True,
+                                        "content_type": headless_result.get("content_type", "application/pdf"),
+                                        "size_bytes": len(content),
+                                        "base64_pdf": base64.b64encode(content).decode("ascii"),
+                                        "source_url": headless_result.get("source_url", ""),
+                                        "capture_mode": headless_result.get("capture_mode", "headless"),
+                                        "fallback_reason": result["error"],
+                                    }
                                 return {
                                     "app_id": app_id,
                                     "object_id": object_id,
@@ -1794,6 +1905,7 @@ class QlikSenseMCPServer:
                 elif name == "engine_export_visualization_to_image":
                     app_id = self._resolve_app_id(arguments["app_id"])
                     object_id = arguments["object_id"]
+                    headless_fallback = bool(arguments.get("headless_fallback", False))
 
                     def _export_visualization_image():
                         try:
@@ -1802,6 +1914,42 @@ class QlikSenseMCPServer:
                             app_handle = app_result.get("qReturn", {}).get("qHandle", -1)
                             if app_handle != -1:
                                 result = self.engine_api.export_visualization_to_image(app_handle, object_id)
+                                if (
+                                    isinstance(result, dict)
+                                    and "qUrl" not in result
+                                    and "error" in result
+                                    and headless_fallback
+                                ):
+                                    headless_result = self._capture_visualization_image_headless(app_id, object_id)
+                                    if "error" in headless_result:
+                                        return _make_error(
+                                            result["error"],
+                                            app_id=app_id,
+                                            object_id=object_id,
+                                            headless_error=headless_result.get("error"),
+                                            headless_details=headless_result.get("details", ""),
+                                        )
+                                    content = headless_result.get("content", b"")
+                                    content_type = headless_result.get("content_type", "image/png")
+                                    inferred_format = "binary"
+                                    if "png" in content_type:
+                                        inferred_format = "png"
+                                    elif "svg" in content_type:
+                                        inferred_format = "svg"
+                                    elif "jpeg" in content_type or "jpg" in content_type:
+                                        inferred_format = "jpeg"
+                                    return {
+                                        "app_id": app_id,
+                                        "object_id": object_id,
+                                        "format": inferred_format,
+                                        "used_headless_fallback": True,
+                                        "content_type": content_type,
+                                        "size_bytes": len(content),
+                                        "base64_image": base64.b64encode(content).decode("ascii"),
+                                        "source_url": headless_result.get("source_url", ""),
+                                        "capture_mode": headless_result.get("capture_mode", "headless"),
+                                        "fallback_reason": result["error"],
+                                    }
                                 return {
                                     "app_id": app_id,
                                     "object_id": object_id,

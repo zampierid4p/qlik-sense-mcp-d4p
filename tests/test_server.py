@@ -326,6 +326,12 @@ class TestQlikSenseMCPServer:
         assert "engine_export_visualization_to_image" in tools
         assert "get_app_reload_chain" in tools
 
+        pdf_schema = tool_map["engine_export_visualization_to_pdf"].inputSchema
+        assert pdf_schema["properties"]["headless_fallback"]["type"] == "boolean"
+
+        image_schema = tool_map["engine_export_visualization_to_image"].inputSchema
+        assert image_schema["properties"]["headless_fallback"]["type"] == "boolean"
+
         get_apps_schema = tool_map["get_apps"].inputSchema
         assert get_apps_schema["properties"]["published"]["type"] == "boolean"
         assert get_apps_schema["properties"]["published"]["default"] is True
@@ -603,3 +609,97 @@ class TestQlikSenseMCPServer:
 
         assert payload["qUrl"] == "/some/layout/image.png"
         assert payload.get("fallback_method") == "layout_extraction"
+
+    @pytest.mark.asyncio
+    @patch.dict("os.environ", {
+        "QLIK_SERVER_URL": "https://qlik.example.com",
+        "QLIK_USER_DIRECTORY": "DOMAIN",
+        "QLIK_USER_ID": "admin",
+        "QLIK_VERIFY_SSL": "false",
+        "QLIK_CLIENT_CERT_PATH": "",
+        "QLIK_CLIENT_KEY_PATH": "",
+        "QLIK_CA_CERT_PATH": "",
+    }, clear=False)
+    async def test_engine_export_pdf_uses_headless_fallback_payload_when_requested(self):
+        server = QlikSenseMCPServer()
+        fake_bytes = b"%PDF-1.7\nFAKE"
+
+        server.engine_api.connect = MagicMock()
+        server.engine_api.disconnect = MagicMock()
+        server.engine_api.open_doc = MagicMock(return_value={"qReturn": {"qHandle": 777}})
+        server.engine_api.export_visualization_to_pdf = MagicMock(
+            return_value={"error": "ExportPdf not available in this engine"}
+        )
+        server._capture_visualization_pdf_headless = MagicMock(return_value={
+            "content": fake_bytes,
+            "content_type": "application/pdf",
+            "source_url": f"https://qlik.example.com/single/?appid={TEST_APP_ID}&obj=obj-1",
+            "capture_mode": "headless",
+        })
+
+        handler = server.server.request_handlers[CallToolRequest]
+        result = await handler(
+            CallToolRequest(
+                params={
+                    "name": "engine_export_visualization_to_pdf",
+                    "arguments": {
+                        "app_id": TEST_APP_ID,
+                        "object_id": "obj-1",
+                        "headless_fallback": True,
+                    },
+                }
+            )
+        )
+        payload = json.loads(result.root.content[0].text)
+
+        assert payload["format"] == "pdf"
+        assert payload["used_headless_fallback"] is True
+        assert payload["size_bytes"] == len(fake_bytes)
+        assert base64.b64decode(payload["base64_pdf"]) == fake_bytes
+
+    @pytest.mark.asyncio
+    @patch.dict("os.environ", {
+        "QLIK_SERVER_URL": "https://qlik.example.com",
+        "QLIK_USER_DIRECTORY": "DOMAIN",
+        "QLIK_USER_ID": "admin",
+        "QLIK_VERIFY_SSL": "false",
+        "QLIK_CLIENT_CERT_PATH": "",
+        "QLIK_CLIENT_KEY_PATH": "",
+        "QLIK_CA_CERT_PATH": "",
+    }, clear=False)
+    async def test_engine_export_image_uses_headless_fallback_payload_when_requested(self):
+        server = QlikSenseMCPServer()
+        fake_bytes = b"\x89PNG\r\n\x1a\nEXPORT"
+
+        server.engine_api.connect = MagicMock()
+        server.engine_api.disconnect = MagicMock()
+        server.engine_api.open_doc = MagicMock(return_value={"qReturn": {"qHandle": 777}})
+        server.engine_api.export_visualization_to_image = MagicMock(
+            return_value={"error": "ExportImg not available in this engine"}
+        )
+        server._capture_visualization_image_headless = MagicMock(return_value={
+            "content": fake_bytes,
+            "content_type": "image/png",
+            "source_url": f"https://qlik.example.com/single/?appid={TEST_APP_ID}&obj=obj-1",
+            "capture_mode": "headless",
+        })
+
+        handler = server.server.request_handlers[CallToolRequest]
+        result = await handler(
+            CallToolRequest(
+                params={
+                    "name": "engine_export_visualization_to_image",
+                    "arguments": {
+                        "app_id": TEST_APP_ID,
+                        "object_id": "obj-1",
+                        "headless_fallback": True,
+                    },
+                }
+            )
+        )
+        payload = json.loads(result.root.content[0].text)
+
+        assert payload["format"] == "png"
+        assert payload["used_headless_fallback"] is True
+        assert payload["size_bytes"] == len(fake_bytes)
+        assert base64.b64decode(payload["base64_image"]) == fake_bytes
