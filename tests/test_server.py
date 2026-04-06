@@ -523,3 +523,83 @@ class TestQlikSenseMCPServer:
         img_payload = json.loads(img_res.root.content[0].text)
         assert img_payload["format"] == "image"
         assert img_payload["qUrl"] == "/temp/export.png"
+
+    @pytest.mark.asyncio
+    @patch.dict("os.environ", {
+        "QLIK_SERVER_URL": "https://qlik.example.com",
+        "QLIK_USER_DIRECTORY": "DOMAIN",
+        "QLIK_USER_ID": "admin",
+        "QLIK_VERIFY_SSL": "false",
+        "QLIK_CLIENT_CERT_PATH": "",
+        "QLIK_CLIENT_KEY_PATH": "",
+        "QLIK_CA_CERT_PATH": "",
+    }, clear=False)
+    async def test_engine_export_pdf_with_image_fallback_when_method_not_found(self):
+        """Test PDF export fallback to image when ExportPdf not available."""
+        server = QlikSenseMCPServer()
+        server.engine_api.connect = MagicMock()
+        server.engine_api.disconnect = MagicMock()
+        server.engine_api.open_doc = MagicMock(return_value={"qReturn": {"qHandle": 777}})
+        
+        # Mock ExportPdf to fail with Method not found
+        server.engine_api.export_visualization_to_pdf = MagicMock(
+            return_value={
+                "qUrl": "/tempcontent/image.png",
+                "qWarnings": ["ExportPdf not available; PNG export provided as fallback"],
+                "fallback_format": "png",
+            }
+        )
+
+        handler = server.server.request_handlers[CallToolRequest]
+        result = await handler(
+            CallToolRequest(
+                params={
+                    "name": "engine_export_visualization_to_pdf",
+                    "arguments": {"app_id": TEST_APP_ID, "object_id": "obj-1"},
+                }
+            )
+        )
+        payload = json.loads(result.root.content[0].text)
+
+        assert payload["qUrl"] == "/tempcontent/image.png"
+        assert "ExportPdf not available" in str(payload.get("qWarnings", []))
+
+    @pytest.mark.asyncio
+    @patch.dict("os.environ", {
+        "QLIK_SERVER_URL": "https://qlik.example.com",
+        "QLIK_USER_DIRECTORY": "DOMAIN",
+        "QLIK_USER_ID": "admin",
+        "QLIK_VERIFY_SSL": "false",
+        "QLIK_CLIENT_CERT_PATH": "",
+        "QLIK_CLIENT_KEY_PATH": "",
+        "QLIK_CA_CERT_PATH": "",
+    }, clear=False)
+    async def test_engine_export_image_with_layout_fallback_when_method_not_found(self):
+        """Test image export fallback to layout extraction when ExportImg not available."""
+        server = QlikSenseMCPServer()
+        server.engine_api.connect = MagicMock()
+        server.engine_api.disconnect = MagicMock()
+        server.engine_api.open_doc = MagicMock(return_value={"qReturn": {"qHandle": 777}})
+        
+        # Mock ExportImg to fail with Method not found, return layout fallback
+        server.engine_api.export_visualization_to_image = MagicMock(
+            return_value={
+                "qUrl": "/some/layout/image.png",
+                "qWarnings": ["ExportImg not available; using image URL from layout as fallback"],
+                "fallback_method": "layout_extraction",
+            }
+        )
+
+        handler = server.server.request_handlers[CallToolRequest]
+        result = await handler(
+            CallToolRequest(
+                params={
+                    "name": "engine_export_visualization_to_image",
+                    "arguments": {"app_id": TEST_APP_ID, "object_id": "obj-1"},
+                }
+            )
+        )
+        payload = json.loads(result.root.content[0].text)
+
+        assert payload["qUrl"] == "/some/layout/image.png"
+        assert payload.get("fallback_method") == "layout_extraction"

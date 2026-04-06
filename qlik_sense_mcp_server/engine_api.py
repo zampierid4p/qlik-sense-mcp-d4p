@@ -1442,20 +1442,78 @@ class QlikEngineAPI:
         )
 
     def export_visualization_to_pdf(self, app_handle: int, object_id: str) -> Dict[str, Any]:
-        """Export visualization to PDF using GenericObject ExportPdf."""
-        obj_handle = self._get_visualization_object_handle(app_handle, object_id)
+        """Export visualization to PDF using GenericObject ExportPdf.
+        
+        Fallback: If ExportPdf is not available (Method not found), returns
+        PNG URL as fallback. Always returns dict; error cases have 'error' key set.
+        """
         try:
+            obj_handle = self._get_visualization_object_handle(app_handle, object_id)
             return self.send_request("ExportPdf", {}, handle=obj_handle)
         except Exception as exc:
-            raise Exception(f"ExportPdf failed for object {object_id}: {exc}") from exc
+            error_str = str(exc)
+            # Check for "Method not found" indicating feature unavailability
+            if "Method not found" in error_str or "-32601" in error_str:
+                # ExportPdf not available; try image export as fallback
+                try:
+                    img_result = self.export_visualization_to_image(app_handle, object_id)
+                    if isinstance(img_result, dict):
+                        if "error" not in img_result and "qUrl" in img_result:
+                            # Image export succeeded; return with fallback note
+                            return {
+                                "qUrl": img_result["qUrl"],
+                                "qWarnings": [
+                                    "ExportPdf not available; PNG export provided as fallback"
+                                ],
+                                "fallback_format": "png",
+                            }
+                        else:
+                            # Image export also has error
+                            return {
+                                "error": f"ExportPdf not available and image export failed: {img_result.get('error', 'unknown')}"
+                            }
+                    else:
+                        return {"error": "ExportPdf not available and image export returned non-dict result"}
+                except Exception as fallback_exc:
+                    return {"error": f"ExportPdf not available and image export also failed: {str(fallback_exc)}"}
+            else:
+                return {"error": f"ExportPdf failed: {error_str}"}
 
     def export_visualization_to_image(self, app_handle: int, object_id: str) -> Dict[str, Any]:
-        """Export visualization to image using GenericObject ExportImg."""
-        obj_handle = self._get_visualization_object_handle(app_handle, object_id)
+        """Export visualization to image using GenericObject ExportImg.
+        
+        Fallback: If ExportImg is not available (Method not found), attempts
+        to extract image URL from object layout. Always returns dict.
+        """
         try:
+            obj_handle = self._get_visualization_object_handle(app_handle, object_id)
             return self.send_request("ExportImg", {}, handle=obj_handle)
         except Exception as exc:
-            raise Exception(f"ExportImg failed for object {object_id}: {exc}") from exc
+            error_str = str(exc)
+            # Check for "Method not found" indicating feature unavailability
+            if "Method not found" in error_str or "-32601" in error_str:
+                # ExportImg not available; try to extract image URL from layout
+                try:
+                    img_ref = self.get_visualization_image_reference(app_handle, object_id)
+                    if isinstance(img_ref, dict):
+                        if "error" not in img_ref and "image_url" in img_ref:
+                            return {
+                                "qUrl": img_ref["image_url"],
+                                "qWarnings": [
+                                    "ExportImg not available; using image URL from layout as fallback"
+                                ],
+                                "fallback_method": "layout_extraction",
+                            }
+                        else:
+                            return {"error": f"ExportImg not available and layout extraction failed: {img_ref.get('error', 'unknown')}"}
+                    else:
+                        return {"error": "ExportImg not available and layout extraction returned non-dict"}
+                except Exception as fallback_exc:
+                    return {
+                        "error": f"ExportImg not available and layout extraction failed: {str(fallback_exc)}"
+                    }
+            else:
+                return {"error": f"ExportImg failed: {error_str}"}
 
     def export_data_to_csv(
         self, app_handle: int, object_id: str, file_path: str = "/qHyperCubeDef"
