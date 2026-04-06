@@ -179,6 +179,10 @@ class GatewayConfig(BaseModel):
     path: str = Field(DEFAULT_GATEWAY_PATH, description="Gateway MCP route path")
     auth_token: Optional[str] = Field(None, description="Bearer token for remote clients")
     auth_passphrase: Optional[str] = Field(None, description="Fallback remote credential")
+    auth_mode: str = Field("token", description="Gateway auth mode: token, jwt, both")
+    jwt_secret: Optional[str] = Field(None, description="HS256 secret for JWT validation")
+    jwt_audience: Optional[str] = Field(None, description="Expected JWT audience (optional)")
+    jwt_issuer: Optional[str] = Field(None, description="Expected JWT issuer (optional)")
     log_level: str = Field("INFO", description="Gateway log level")
 
     @field_validator("host")
@@ -202,6 +206,22 @@ class GatewayConfig(BaseModel):
         normalized = value.strip()
         return normalized or None
 
+    @field_validator("auth_mode")
+    @classmethod
+    def normalize_auth_mode(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"token", "jwt", "both"}:
+            raise ValueError("MCP_AUTH_MODE must be one of: token, jwt, both")
+        return normalized
+
+    @field_validator("jwt_secret", "jwt_audience", "jwt_issuer", mode="before")
+    @classmethod
+    def normalize_jwt_fields(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
     @field_validator("log_level")
     @classmethod
     def normalize_log_level(cls, value: str) -> str:
@@ -212,9 +232,18 @@ class GatewayConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_auth(self) -> "GatewayConfig":
-        if not self.auth_token and not self.auth_passphrase:
+        token_available = bool(self.auth_token or self.auth_passphrase)
+        jwt_available = bool(self.jwt_secret)
+
+        if self.auth_mode == "token" and not token_available:
             raise ValueError(
                 "Remote gateway requires MCP_AUTH_TOKEN or MCP_AUTH_PASSPHRASE to be set"
+            )
+        if self.auth_mode == "jwt" and not jwt_available:
+            raise ValueError("Remote gateway with MCP_AUTH_MODE=jwt requires MCP_JWT_SECRET")
+        if self.auth_mode == "both" and not (token_available or jwt_available):
+            raise ValueError(
+                "Remote gateway with MCP_AUTH_MODE=both requires token/passphrase or MCP_JWT_SECRET"
             )
         return self
 
@@ -238,5 +267,9 @@ class GatewayConfig(BaseModel):
             path=os.getenv("MCP_GATEWAY_PATH", DEFAULT_GATEWAY_PATH),
             auth_token=os.getenv("MCP_AUTH_TOKEN"),
             auth_passphrase=os.getenv("MCP_AUTH_PASSPHRASE"),
+            auth_mode=os.getenv("MCP_AUTH_MODE", "token"),
+            jwt_secret=os.getenv("MCP_JWT_SECRET"),
+            jwt_audience=os.getenv("MCP_JWT_AUDIENCE"),
+            jwt_issuer=os.getenv("MCP_JWT_ISSUER"),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
         )

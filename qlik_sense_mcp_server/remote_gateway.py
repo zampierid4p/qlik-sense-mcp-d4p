@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import json
 import logging
 import os
 import sys
+import time
 from contextlib import asynccontextmanager
 from typing import Optional, Set
 
@@ -58,29 +63,127 @@ def _extract_token(request: Request) -> Optional[str]:
     return None
 
 
-def _is_authorized(request: Request, valid_tokens: Set[str]) -> bool:
-    """Validate request token against configured tokens."""
-    if not valid_tokens:
+def _b64url_decode(value: str) -> bytes:
+    """Decode a base64url string with optional stripped padding."""
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(value + padding)
+
+
+def _is_valid_jwt_hs256(
+    token: str,
+    secret: Optional[str],
+    audience: Optional[str] = None,
+    issuer: Optional[str] = None,
+) -> bool:
+    """Validate HS256 JWT signature and standard claims."""
+    if not secret:
         return False
+
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return False
+
+        header_b64, payload_b64, signature_b64 = parts
+        header = json.loads(_b64url_decode(header_b64).decode("utf-8"))
+        payload = json.loads(_b64url_decode(payload_b64).decode("utf-8"))
+
+        if header.get("alg") != "HS256":
+            return False
+
+        signing_input = f"{header_b64}.{payload_b64}".encode("utf-8")
+        expected_sig = hmac.new(secret.encode("utf-8"), signing_input, hashlib.sha256).digest()
+        provided_sig = _b64url_decode(signature_b64)
+
+        if not hmac.compare_digest(expected_sig, provided_sig):
+            return False
+
+        now = int(time.time())
+        exp = payload.get("exp")
+        if exp is not None and now >= int(exp):
+            return False
+
+        nbf = payload.get("nbf")
+        if nbf is not None and now < int(nbf):
+            return False
+
+        if issuer and payload.get("iss") != issuer:
+            return False
+
+        if audience:
+            aud = payload.get("aud")
+            if isinstance(aud, str):
+                if aud != audience:
+                    return False
+            elif isinstance(aud, list):
+                if audience not in aud:
+                    return False
+            else:
+                return False
+
+        return True
+    except Exception:
+        return False
+
+
+def _is_authorized(
+    request: Request,
+    valid_tokens: Set[str],
+    auth_mode: str = "token",
+    jwt_secret: Optional[str] = None,
+    jwt_audience: Optional[str] = None,
+    jwt_issuer: Optional[str] = None,
+) -> bool:
+    """Validate request token against configured tokens."""
     request_token = _extract_token(request)
-    return bool(request_token and request_token in valid_tokens)
+    if not request_token:
+        return False
+
+    token_allowed = auth_mode in {"token", "both"} and bool(valid_tokens and request_token in valid_tokens)
+    jwt_allowed = auth_mode in {"jwt", "both"} and _is_valid_jwt_hs256(
+        request_token,
+        jwt_secret,
+        audience=jwt_audience,
+        issuer=jwt_issuer,
+    )
+
+    return token_allowed or jwt_allowed
 
 
 class AuthenticatedMCPASGI:
     """ASGI wrapper that enforces token auth before forwarding to MCP manager."""
 
-    def __init__(self, manager: StreamableHTTPSessionManager, valid_tokens: Set[str]):
+    def __init__(
+        self,
+        manager: StreamableHTTPSessionManager,
+        valid_tokens: Set[str],
+        auth_mode: str = "token",
+        jwt_secret: Optional[str] = None,
+        jwt_audience: Optional[str] = None,
+        jwt_issuer: Optional[str] = None,
+    ):
         self.manager = manager
         self.valid_tokens = valid_tokens
+        self.auth_mode = auth_mode
+        self.jwt_secret = jwt_secret
+        self.jwt_audience = jwt_audience
+        self.jwt_issuer = jwt_issuer
 
     async def __call__(self, scope, receive, send):
         request = Request(scope, receive)
 
-        if not _is_authorized(request, self.valid_tokens):
+        if not _is_authorized(
+            request,
+            self.valid_tokens,
+            auth_mode=self.auth_mode,
+            jwt_secret=self.jwt_secret,
+            jwt_audience=self.jwt_audience,
+            jwt_issuer=self.jwt_issuer,
+        ):
             response = JSONResponse(
                 {
                     "error": "unauthorized",
-                    "message": "Provide Authorization: Bearer <token> or X-MCP-Token header",
+                    "message": "Provide Authorization: Bearer <token> or X-MCP-Token header (token or JWT based on gateway config)",
                 },
                 status_code=401,
                 headers={"WWW-Authenticate": "Bearer"},
@@ -103,6 +206,7 @@ def _build_startup_metadata(gateway_config: GatewayConfig, qlik_config: QlikSens
             "public_port": gateway_config.public_port,
             "path": gateway_config.path,
             "auth_configured": True,
+            "auth_mode": gateway_config.auth_mode,
         },
         "qlik": {
             "server_url": qlik_config.server_url,
@@ -147,7 +251,14 @@ def create_gateway_app(gateway_config: Optional[GatewayConfig] = None) -> Starle
         stateless=False,
     )
 
-    auth_mcp_asgi = AuthenticatedMCPASGI(session_manager, gateway_config.auth_tokens)
+    auth_mcp_asgi = AuthenticatedMCPASGI(
+        session_manager,
+        gateway_config.auth_tokens,
+        auth_mode=gateway_config.auth_mode,
+        jwt_secret=gateway_config.jwt_secret,
+        jwt_audience=gateway_config.jwt_audience,
+        jwt_issuer=gateway_config.jwt_issuer,
+    )
 
     @asynccontextmanager
     async def lifespan(_app: Starlette):
@@ -222,7 +333,7 @@ OPTIONS:
     -v, --version  Show version information
 
 REQUIRED ENVIRONMENT:
-    MCP_AUTH_TOKEN or MCP_AUTH_PASSPHRASE - Token for Bearer authentication
+    MCP_AUTH_TOKEN or MCP_AUTH_PASSPHRASE - Token for Bearer authentication (token mode)
     QLIK_SERVER_URL                        - Qlik Sense server URL
     QLIK_USER_DIRECTORY                    - Qlik user directory
     QLIK_USER_ID                           - Qlik user ID
@@ -231,6 +342,10 @@ REQUIRED ENVIRONMENT:
     QLIK_CA_CERT_PATH                      - Path to CA certificate
 
 OPTIONAL ENVIRONMENT:
+    MCP_AUTH_MODE                          - token (default), jwt, or both
+    MCP_JWT_SECRET                         - HS256 secret for JWT validation
+    MCP_JWT_AUDIENCE                       - Expected JWT aud claim (optional)
+    MCP_JWT_ISSUER                         - Expected JWT iss claim (optional)
     MCP_GATEWAY_HOST                       - Listen host (default: 0.0.0.0)
     MCP_GATEWAY_PORT                       - Listen port (default: 8080)
     MCP_GATEWAY_PATH                       - MCP endpoint path (default: /mcp)

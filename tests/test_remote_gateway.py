@@ -1,5 +1,10 @@
 """Tests for remote gateway helpers."""
 
+import base64
+import hashlib
+import hmac
+import json
+import time
 from contextlib import asynccontextmanager
 from unittest.mock import patch
 
@@ -34,6 +39,16 @@ def _make_request(headers: dict[str, str]) -> Request:
         return {"type": "http.request", "body": b"", "more_body": False}
 
     return Request(scope, receive)
+
+
+def _make_hs256_jwt(payload: dict[str, object], secret: str) -> str:
+    header = {"alg": "HS256", "typ": "JWT"}
+    header_b64 = base64.urlsafe_b64encode(json.dumps(header, separators=(",", ":")).encode()).rstrip(b"=").decode()
+    payload_b64 = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).rstrip(b"=").decode()
+    signing_input = f"{header_b64}.{payload_b64}".encode()
+    signature = hmac.new(secret.encode(), signing_input, hashlib.sha256).digest()
+    signature_b64 = base64.urlsafe_b64encode(signature).rstrip(b"=").decode()
+    return f"{header_b64}.{payload_b64}.{signature_b64}"
 
 
 class TestPathNormalization:
@@ -156,3 +171,31 @@ class TestGatewayHttp:
         assert response.status_code == 200
         ready_response = client.get("/readyz")
         assert ready_response.json()["gateway"]["path"] == "/custom/mcp"
+
+    def test_mcp_accepts_jwt_when_mode_is_jwt(self, monkeypatch):
+        client = _make_client(
+            monkeypatch,
+            {
+                "MCP_AUTH_MODE": "jwt",
+                "MCP_JWT_SECRET": "super-secret",
+            },
+        )
+
+        token = _make_hs256_jwt({"sub": "tester", "exp": int(time.time()) + 60}, "super-secret")
+        response = client.get("/mcp/", headers={"Authorization": f"Bearer {token}"})
+        assert response.status_code == 200
+        assert response.json()["handled"] is True
+
+    def test_mcp_rejects_expired_jwt(self, monkeypatch):
+        client = _make_client(
+            monkeypatch,
+            {
+                "MCP_AUTH_MODE": "jwt",
+                "MCP_JWT_SECRET": "super-secret",
+            },
+        )
+
+        token = _make_hs256_jwt({"sub": "tester", "exp": int(time.time()) - 60}, "super-secret")
+        response = client.get("/mcp/", headers={"Authorization": f"Bearer {token}"})
+        assert response.status_code == 401
+        assert response.json()["error"] == "unauthorized"
