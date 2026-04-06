@@ -6,6 +6,22 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-04-06
+
+### Added
+- JWT HS256 authentication support for the remote gateway with configurable authentication modes: `token` (static bearer), `jwt` (HS256 signed tokens), and `both` (dual support)
+- MCP_AUTH_MODE environment variable to switch between authentication modes
+- JWT validation with claim verification: signature verification, exp/nbf temporal claims, optional aud/iss validation
+- Complete MCP_JWT_SECRET, MCP_JWT_AUDIENCE, and MCP_JWT_ISSUER configuration variables for JWT setup
+- Comprehensive documentation in README.md (new "Remote Gateway Authentication Modes" section) with auth mode examples and security recommendations
+- Unit tests for JWT HS256 validation and dual authentication mode (token + JWT) in test_remote_gateway.py
+- COMMANDS.md and .env.example updated with JWT authentication examples and setup instructions
+
+### Changed
+- Remote gateway initialization now accepts auth_mode parameter to support multiple authentication strategies
+- Pydantic config models extended with cross-field validation to ensure authentication credentials/mode alignment
+- GatewayConfig loads JWT parameters from environment variables during initialization
+
 ## [1.4.7] - 2026-04-05
 
 ### Added
