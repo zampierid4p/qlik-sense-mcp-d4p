@@ -6,6 +6,11 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-04-07
+
+### Added
+- Remote gateway startup now logs the MCP server version as the first log line
+
 ## [1.5.1] - 2026-04-07
 
 ### Added

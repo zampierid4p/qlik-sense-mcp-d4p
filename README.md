@@ -738,7 +738,7 @@ docker login
 ```bash
 export DOCKERHUB_USER=your-dockerhub-user
 export IMAGE_NAME=qlik-sense-mcp-server
-export IMAGE_TAG=1.5.1
+export IMAGE_TAG=1.5.2
 export IMAGE_REF="$DOCKERHUB_USER/$IMAGE_NAME:$IMAGE_TAG"
 ```
 
