@@ -28,10 +28,104 @@ from .server import QlikSenseMCPServer
 
 logger = logging.getLogger(__name__)
 
+_STARTUP_ENV_KEYS = (
+    "QLIK_SERVER_URL",
+    "QLIK_USER_DIRECTORY",
+    "QLIK_USER_ID",
+    "QLIK_CLIENT_CERT_PATH",
+    "QLIK_CLIENT_KEY_PATH",
+    "QLIK_CA_CERT_PATH",
+    "QLIK_REPOSITORY_PORT",
+    "QLIK_PROXY_PORT",
+    "QLIK_ENGINE_PORT",
+    "QLIK_HTTP_PORT",
+    "QLIK_VERIFY_SSL",
+    "MCP_GATEWAY_HOST",
+    "MCP_GATEWAY_PORT",
+    "MCP_PUBLIC_PORT",
+    "MCP_GATEWAY_PATH",
+    "MCP_AUTH_MODE",
+    "MCP_AUTH_TOKEN",
+    "MCP_AUTH_PASSPHRASE",
+    "MCP_JWT_SECRET",
+    "MCP_JWT_AUDIENCE",
+    "MCP_JWT_ISSUER",
+    "LOG_LEVEL",
+)
+
+_SENSITIVE_ENV_TOKENS = ("TOKEN", "PASSPHRASE", "SECRET", "KEY", "PASSWORD")
+_CERT_PATH_KEYS = {
+    "QLIK_CLIENT_CERT_PATH",
+    "QLIK_CLIENT_KEY_PATH",
+    "QLIK_CA_CERT_PATH",
+}
+
 
 def _normalize_path(path: str) -> str:
     """Normalize endpoint path to a slash-prefixed route."""
     return GatewayConfig.model_fields["path"].default if not path else GatewayConfig(path=path, auth_token="placeholder").path
+
+
+def _normalize_env_value(value: object) -> str:
+    """Normalize environment values for stable startup logging."""
+    if value is None:
+        return "<unset>"
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped if stripped else "<empty>"
+    return str(value)
+
+
+def _is_sensitive_env_key(env_key: str) -> bool:
+    """Return True when the key should be redacted in startup logs."""
+    upper_key = env_key.upper()
+    if upper_key in _CERT_PATH_KEYS:
+        return False
+    return any(token in upper_key for token in _SENSITIVE_ENV_TOKENS)
+
+
+def _redact_env_value(env_key: str, value: object) -> str:
+    """Redact sensitive startup env values while preserving empty/unset states."""
+    normalized = _normalize_env_value(value)
+    if _is_sensitive_env_key(env_key) and normalized not in {"<unset>", "<empty>"}:
+        return "***redacted***"
+    return normalized
+
+
+def _build_startup_environment_snapshot(
+    gateway_config: GatewayConfig,
+    qlik_config: QlikSenseConfig,
+) -> dict[str, str]:
+    """Build startup env snapshot with sensitive values safely redacted."""
+    resolved_values: dict[str, object] = {
+        "QLIK_SERVER_URL": qlik_config.server_url,
+        "QLIK_USER_DIRECTORY": qlik_config.user_directory,
+        "QLIK_USER_ID": qlik_config.user_id,
+        "QLIK_CLIENT_CERT_PATH": qlik_config.client_cert_path,
+        "QLIK_CLIENT_KEY_PATH": qlik_config.client_key_path,
+        "QLIK_CA_CERT_PATH": qlik_config.ca_cert_path,
+        "QLIK_REPOSITORY_PORT": qlik_config.repository_port,
+        "QLIK_PROXY_PORT": qlik_config.proxy_port,
+        "QLIK_ENGINE_PORT": qlik_config.engine_port,
+        "QLIK_HTTP_PORT": qlik_config.http_port,
+        "QLIK_VERIFY_SSL": qlik_config.verify_ssl,
+        "MCP_GATEWAY_HOST": gateway_config.host,
+        "MCP_GATEWAY_PORT": gateway_config.port,
+        "MCP_PUBLIC_PORT": gateway_config.public_port,
+        "MCP_GATEWAY_PATH": gateway_config.path,
+        "MCP_AUTH_MODE": gateway_config.auth_mode,
+        "MCP_AUTH_TOKEN": gateway_config.auth_token,
+        "MCP_AUTH_PASSPHRASE": gateway_config.auth_passphrase,
+        "MCP_JWT_SECRET": gateway_config.jwt_secret,
+        "MCP_JWT_AUDIENCE": gateway_config.jwt_audience,
+        "MCP_JWT_ISSUER": gateway_config.jwt_issuer,
+        "LOG_LEVEL": gateway_config.log_level,
+    }
+
+    snapshot: dict[str, str] = {}
+    for key in _STARTUP_ENV_KEYS:
+        snapshot[key] = _redact_env_value(key, resolved_values.get(key, os.getenv(key)))
+    return snapshot
 
 
 def _get_auth_tokens_from_env() -> Set[str]:
@@ -226,6 +320,7 @@ def _validate_startup(gateway_config: GatewayConfig) -> tuple[QlikSenseConfig, d
     qlik_config = QlikSenseConfig.from_env()
     qlik_config.validate_runtime()
     startup_metadata = _build_startup_metadata(gateway_config, qlik_config)
+    startup_environment = _build_startup_environment_snapshot(gateway_config, qlik_config)
     logger.info(
         "Validated remote gateway config host=%s port=%s public_port=%s path=%s auth_configured=%s",
         gateway_config.host,
@@ -234,6 +329,7 @@ def _validate_startup(gateway_config: GatewayConfig) -> tuple[QlikSenseConfig, d
         gateway_config.path,
         True,
     )
+    logger.info("Startup environment parameters: startup_environment=%s", startup_environment)
     return qlik_config, startup_metadata
 
 

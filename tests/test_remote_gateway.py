@@ -13,12 +13,15 @@ from starlette.requests import Request
 from starlette.testclient import TestClient
 
 from qlik_sense_mcp_server.remote_gateway import (
+    _build_startup_environment_snapshot,
     _extract_token,
     _get_auth_tokens_from_env,
     _is_authorized,
     _normalize_path,
+    _validate_startup,
     create_gateway_app,
 )
+from qlik_sense_mcp_server.config import GatewayConfig, QlikSenseConfig
 
 
 def _make_request(headers: dict[str, str]) -> Request:
@@ -71,6 +74,64 @@ class TestTokenConfig:
         tokens = _get_auth_tokens_from_env()
         assert "token123" in tokens
         assert "phrase456" in tokens
+
+
+class TestStartupEnvironmentLogging:
+    def test_startup_environment_snapshot_masks_secrets_and_shows_full_cert_paths(self):
+        gateway_config = GatewayConfig(
+            auth_token="gateway-token",
+            auth_passphrase="gateway-passphrase",
+            auth_mode="both",
+            jwt_secret="jwt-secret",
+            jwt_audience="gateway-aud",
+            jwt_issuer="gateway-issuer",
+            log_level="DEBUG",
+        )
+        qlik_config = QlikSenseConfig(
+            server_url="https://qlik.example.com",
+            user_directory="DOMAIN",
+            user_id="admin",
+            client_cert_path="/certs/client.pem",
+            client_key_path="/certs/client_key.pem",
+            ca_cert_path="/certs/root-ca.pem",
+            repository_port=4242,
+            proxy_port=4243,
+            engine_port=4747,
+            verify_ssl=True,
+        )
+
+        snapshot = _build_startup_environment_snapshot(gateway_config, qlik_config)
+
+        assert snapshot["MCP_AUTH_TOKEN"] == "***redacted***"
+        assert snapshot["MCP_AUTH_PASSPHRASE"] == "***redacted***"
+        assert snapshot["MCP_JWT_SECRET"] == "***redacted***"
+        assert snapshot["QLIK_CLIENT_CERT_PATH"] == "/certs/client.pem"
+        assert snapshot["QLIK_CLIENT_KEY_PATH"] == "/certs/client_key.pem"
+        assert snapshot["QLIK_CA_CERT_PATH"] == "/certs/root-ca.pem"
+        assert snapshot["QLIK_SERVER_URL"] == "https://qlik.example.com"
+        assert snapshot["MCP_GATEWAY_PATH"] == "/mcp"
+        assert snapshot["LOG_LEVEL"] == "DEBUG"
+
+    def test_validate_startup_logs_environment_snapshot(self, monkeypatch, caplog):
+        gateway_config = GatewayConfig(auth_token="gateway-token")
+        qlik_config = QlikSenseConfig(
+            server_url="https://qlik.example.com",
+            user_directory="DOMAIN",
+            user_id="admin",
+            verify_ssl=True,
+        )
+
+        monkeypatch.setattr(
+            "qlik_sense_mcp_server.remote_gateway.QlikSenseConfig.from_env",
+            lambda: qlik_config,
+        )
+
+        with caplog.at_level("INFO", logger="qlik_sense_mcp_server.remote_gateway"):
+            _validate_startup(gateway_config)
+
+        assert "Startup environment parameters: startup_environment=" in caplog.text
+        assert "'MCP_AUTH_TOKEN': '***redacted***'" in caplog.text
+        assert "'QLIK_SERVER_URL': 'https://qlik.example.com'" in caplog.text
 
 
 class TestAuthExtraction:

@@ -36,8 +36,8 @@ class TestVersion:
         for part in parts:
             assert part.isdigit()
 
-    def test_version_is_1_5_0(self):
-        assert __version__ == "1.5.0"
+    def test_version_is_1_5_1(self):
+        assert __version__ == "1.5.1"
 
 
 class TestQlikSenseMCPServer:

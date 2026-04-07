@@ -6,6 +6,15 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-04-07
+
+### Added
+- Remote gateway startup now logs a full environment snapshot of runtime parameters for MCP/Qlik initialization
+
+### Security
+- Sensitive startup values are redacted in logs (`MCP_AUTH_TOKEN`, `MCP_AUTH_PASSPHRASE`, `MCP_JWT_SECRET`, and related secret-like keys)
+- Certificate environment variables keep full paths visible (`QLIK_CLIENT_CERT_PATH`, `QLIK_CLIENT_KEY_PATH`, `QLIK_CA_CERT_PATH`) for operational troubleshooting
+
 ## [1.5.0] - 2026-04-06
 
 ### Added
