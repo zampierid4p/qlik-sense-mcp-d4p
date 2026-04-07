@@ -129,6 +129,7 @@ class TestStartupEnvironmentLogging:
         with caplog.at_level("INFO", logger="qlik_sense_mcp_server.remote_gateway"):
             _validate_startup(gateway_config)
 
+        assert "Starting qlik-sense-mcp-gateway version=" in caplog.text
         assert "Startup environment parameters: startup_environment=" in caplog.text
         assert "'MCP_AUTH_TOKEN': '***redacted***'" in caplog.text
         assert "'QLIK_SERVER_URL': 'https://qlik.example.com'" in caplog.text

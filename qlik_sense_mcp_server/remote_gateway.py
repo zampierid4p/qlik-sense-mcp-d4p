@@ -321,6 +321,7 @@ def _validate_startup(gateway_config: GatewayConfig) -> tuple[QlikSenseConfig, d
     qlik_config.validate_runtime()
     startup_metadata = _build_startup_metadata(gateway_config, qlik_config)
     startup_environment = _build_startup_environment_snapshot(gateway_config, qlik_config)
+    logger.info("Starting qlik-sense-mcp-gateway version=%s", __version__)
     logger.info(
         "Validated remote gateway config host=%s port=%s public_port=%s path=%s auth_configured=%s",
         gateway_config.host,
